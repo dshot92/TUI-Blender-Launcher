@@ -1,11 +1,15 @@
-APP := tbl
-BIN := $(HOME)/.local/bin/$(APP)
+BIN := $(HOME)/.local/bin/tbl
 
 build:
-	go build -o $(APP)
+	go build
 
 install: build
-	ln -sf $(PWD)/$(APP) $(BIN)
+	mkdir -p $(dir $(BIN))
+	rm -f $(BIN)
+	ln -s $(PWD)/TUI-Blender-Launcher $(BIN)
 
 run: install
-	$(APP)
+	$(BIN)
+
+uninstall:
+	rm $(BIN)
