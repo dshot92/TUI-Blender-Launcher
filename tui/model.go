@@ -31,6 +31,7 @@ type Model struct {
 	activeDownloadID string // Store the active download build ID for tracking
 	downloadStates   map[string]*model.DownloadState
 	lastRenderState  map[string]float64 // Track last rendered progress for each download
+	Style            Style              // Add Style struct for UI styling
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -57,9 +58,10 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		config:           cfg,
 		commands:         NewCommands(cfg),
 		progressBar:      progModel,
-		sortColumn:       0,     // Default sort by Version
-		sortReversed:     true,  // Default descending sort (newest versions first)
-		editMode:         false, // Start in navigation mode, not edit mode
+		Style:            NewStyle(), // Initialize Style
+		sortColumn:       0,          // Default sort by Version
+		sortReversed:     true,       // Default descending sort (newest versions first)
+		editMode:         false,      // Start in navigation mode, not edit mode
 		downloadStates:   make(map[string]*model.DownloadState),
 		lastRenderState:  make(map[string]float64),
 		buildTypeOptions: buildTypeOptions,

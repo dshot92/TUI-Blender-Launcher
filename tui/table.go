@@ -43,16 +43,11 @@ var (
 		"Size":       {width: 0, priority: 7, flex: 1.0},
 		"Build Date": {width: 0, priority: 3, flex: 1.0},
 	}
-
-	selectedHeaderCellStyle = lp.NewStyle().
-				Background(lp.Color(backgroundColor)).
-				Foreground(lp.Color(textColor)).
-				Bold(true).
-				Align(lp.Center)
 )
 
 // Render renders a single row with the given column configuration
-func (r Row) Render(columns []ColumnConfig) string {
+// Now takes a Style parameter for row styling
+func (r Row) Render(columns []ColumnConfig, style Style) string {
 	var cells []string
 
 	// Special handling for downloads and extractions
@@ -197,36 +192,28 @@ func (r Row) Render(columns []ColumnConfig) string {
 
 	// Apply appropriate style consistently across the entire row
 	if r.IsSelected {
-		// Use selected style with explicit width to ensure alignment
-		return selectedRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
+		// Use style.SelectedRow and style.RegularRow instead of global variables
+		return style.SelectedRow.Width(sumColumnWidths(columns)).Render(rowString)
 	}
-
-	// Apply red text style for failed downloads
 	if isFailed || isCancelled {
 		return lp.NewStyle().
 			Foreground(lp.Color(redColor)).
 			Width(sumColumnWidths(columns)).
 			Render(rowString)
 	}
-
-	// Apply orange text style for local builds
 	if isOnline {
 		return lp.NewStyle().
 			Foreground(lp.Color(orangeColor)).
 			Width(sumColumnWidths(columns)).
 			Render(rowString)
 	}
-
-	// Apply green text style for updated builds
 	if isUpdate {
 		return lp.NewStyle().
 			Foreground(lp.Color(greenColor)).
 			Width(sumColumnWidths(columns)).
 			Render(rowString)
 	}
-
-	// Use regular style with explicit width to ensure alignment
-	return regularRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
+	return style.RegularRow.Width(sumColumnWidths(columns)).Render(rowString)
 }
 
 // Helper function to calculate the sum of all column widths
@@ -331,7 +318,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		// Always render downloading/extracting rows, never skip them
 		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
-		rowText := row.Render(columns)
+		rowText := row.Render(columns, m.Style)
 
 		// Ensure each row has proper width
 		output.WriteString(rowText)
@@ -383,9 +370,9 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 			}
 		}
 		if col.Index == m.sortColumn {
-			headerCells = append(headerCells, selectedHeaderCellStyle.Width(col.Width).Render(headerText))
+			headerCells = append(headerCells, m.Style.SelectedHeaderCell.Width(col.Width).Render(headerText))
 		} else {
-			headerCells = append(headerCells, lp.NewStyle().Bold(true).Align(lp.Center).Width(col.Width).Render(headerText))
+			headerCells = append(headerCells, m.Style.HeaderCell.Width(col.Width).Render(headerText))
 		}
 	}
 

@@ -7,16 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	lp "github.com/charmbracelet/lipgloss"
 )
 
 // renderBuildFooter renders the footer for the build list view
 func (m *Model) renderBuildFooter() string {
-	keyStyle := lp.NewStyle().Foreground(lp.Color(highlightColor))
-	sepStyle := lp.NewStyle()
+	keyStyle := m.Style.Key
+	sepStyle := m.Style.Separator
 	separator := sepStyle.Render(" · ")
-	newlineStyle := lp.NewStyle().Render("\n")
+	newlineStyle := m.Style.Newline.Render("\n")
 
 	// General commands always available
 	generalCommands := []string{
@@ -79,15 +77,15 @@ func (m *Model) renderBuildFooter() string {
 
 	// Combine lines with styled newline
 	footerContent := line1 + newlineStyle + line2
-	return footerStyle.Width(m.terminalWidth).Render(footerContent)
+	return m.Style.Footer.Width(m.terminalWidth).Render(footerContent)
 }
 
 // renderSettingsFooter renders the footer for the settings view
 func (m *Model) renderSettingsFooter() string {
-	keyStyle := lp.NewStyle().Foreground(lp.Color(highlightColor))
-	sepStyle := lp.NewStyle()
+	keyStyle := m.Style.Key
+	sepStyle := m.Style.Separator
 	separator := sepStyle.Render(" · ")
-	newlineStyle := lp.NewStyle().Render("\n")
+	newlineStyle := m.Style.Newline.Render("\n")
 
 	// Check if old builds exist to clean
 	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)
@@ -116,5 +114,5 @@ func (m *Model) renderSettingsFooter() string {
 
 	// Combine lines with styled newline
 	footerContent := newlineStyle + line2
-	return footerStyle.Width(m.terminalWidth).Render(footerContent)
+	return m.Style.Footer.Width(m.terminalWidth).Render(footerContent)
 }

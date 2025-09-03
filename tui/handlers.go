@@ -210,9 +210,9 @@ func (m *Model) handleShowSettings() (tea.Model, tea.Cmd) {
 	// Ensure all inputs are properly styled based on focus state
 	for i := range m.settingsInputs {
 		if i == m.focusIndex {
-			m.settingsInputs[i].PromptStyle = selectedRowStyle
+			m.settingsInputs[i].PromptStyle = m.Style.SelectedRow
 		} else {
-			m.settingsInputs[i].PromptStyle = regularRowStyle
+			m.settingsInputs[i].PromptStyle = m.Style.RegularRow
 		}
 		// Ensure all are blurred initially
 		m.settingsInputs[i].Blur()
@@ -626,7 +626,7 @@ func updateFocusStyles(m *Model, oldFocus int) {
 	for i := 0; i < len(m.settingsInputs); i++ {
 		if i == m.focusIndex {
 			// For the selected item, use a highlighted prompt style
-			m.settingsInputs[i].PromptStyle = selectedRowStyle
+			m.settingsInputs[i].PromptStyle = m.Style.SelectedRow
 
 			// For edit mode, focus the input
 			if m.editMode && i == m.focusIndex {
@@ -637,7 +637,7 @@ func updateFocusStyles(m *Model, oldFocus int) {
 			}
 		} else {
 			// Normal style for unselected items
-			m.settingsInputs[i].PromptStyle = regularRowStyle
+			m.settingsInputs[i].PromptStyle = m.Style.RegularRow
 
 			// Ensure non-focused inputs are blurred
 			m.settingsInputs[i].Blur()

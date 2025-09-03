@@ -2,8 +2,6 @@ package tui
 
 import (
 	"strings"
-
-	lp "github.com/charmbracelet/lipgloss"
 )
 
 func (m *Model) renderPageForView() string {
@@ -24,7 +22,7 @@ func (m *Model) renderPageForView() string {
 	header := renderHeader(m.terminalWidth)
 
 	// Create slim horizontal separators
-	separatorStyle := lp.NewStyle()
+	separatorStyle := m.Style.Separator
 	separator := separatorStyle.Render(strings.Repeat(" ", m.terminalWidth))
 
 	// Generate content and footer based on current view
@@ -47,11 +45,11 @@ func (m *Model) renderPageForView() string {
 	}
 
 	// Use lipgloss to create styled newlines for padding
-	paddingStyle := lp.NewStyle()
+	paddingStyle := m.Style.Separator
 	padding := paddingStyle.Render(strings.Repeat("\n", paddingLines))
 
 	// Create newline style for joining sections
-	newlineStyle := lp.NewStyle().Render("\n")
+	newlineStyle := m.Style.Newline.Render("\n")
 
 	// Build the final view with all components properly styled
 	var view strings.Builder

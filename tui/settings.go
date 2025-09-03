@@ -11,29 +11,21 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
 	// Define global styles for the settings rendering
-	normalTextStyle := lp.NewStyle().Width(m.terminalWidth).Align(lp.Center).Bold(true)
+	style := m.Style
 
-	primaryColor := lp.Color(highlightColor) // Use highlight color (blue) from constants
-	subtleColor := lp.Color(highlightColor)  // Use text color (white) from constants
-	highlightBg := lp.Color(backgroundColor) // Use background color (gray) from constants
+	normalTextStyle := style.HeaderCell.Width(m.terminalWidth).Align(1).Bold(true)
 
-	labelStyle := lp.NewStyle().Foreground(primaryColor).Bold(true)
-	labelStyleFocused := labelStyle.
-		Foreground(lp.Color(highlightColor)).
-		Background(lp.Color(highlightBg)).
-		Bold(true)
+	labelStyle := style.Key.Bold(true)
+	labelStyleFocused := style.Key.Background(lp.Color(backgroundColor)).Bold(true)
 
-	inputStyle := lp.NewStyle().MarginLeft(2)
-	inputStyleFocused := inputStyle.Foreground(lp.Color(textColor))
+	inputStyle := style.RegularRow.MarginLeft(2)
+	inputStyleFocused := style.SelectedRow.Foreground(lp.Color(textColor))
 
-	descStyle := lp.NewStyle().Foreground(subtleColor).Italic(true)
-	sectionStyle := lp.NewStyle()
+	descStyle := style.RegularRow.Italic(true)
+	sectionStyle := style.RegularRow
 
-	optionStyle := lp.NewStyle().MarginRight(1)
-	selectedOptionStyle := lp.NewStyle().
-		Background(lp.Color(highlightColor)).
-		Foreground(lp.Color(textColor)).
-		MarginRight(1)
+	optionStyle := style.RegularRow.MarginRight(1)
+	selectedOptionStyle := style.SelectedRow.MarginRight(1)
 
 	// Display welcome messages and prompt if in the initial setup view
 	if m.currentView == viewInitialSetup {

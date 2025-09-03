@@ -2,7 +2,6 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbles/key"
-	lp "github.com/charmbracelet/lipgloss"
 )
 
 // Constants for UI styling and configuration
@@ -144,14 +143,5 @@ func GetCommandsForView(view viewState) []KeyCommand {
 	return result
 }
 
-// Styles using lipgloss
-var (
-	// Style for the selected row
-	selectedRowStyle = lp.NewStyle().Background(lp.Color(backgroundColor)).Foreground(lp.Color(textColor)).Align(lp.Left)
-	// Style for regular rows (use default)
-	regularRowStyle = lp.NewStyle().Align(lp.Left)
-	// Footer style - remove margin and use minimal padding
-	footerStyle = lp.NewStyle().Padding(0, 0).Foreground(lp.Color(textColor))
-	// Define base styles for columns (can be customized further)
-
-)
+// Styles using lipgloss are now in style.go
+// To use styles, pass a Style struct (from style.go) to functions/components that need styling.
