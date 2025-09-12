@@ -1,4 +1,4 @@
-BIN := $(HOME)/.local/bin/tbl
+BIN := $(HOME)/.local/bin/TUI-Blender-Launcher
 
 build:
 	go build
