@@ -61,7 +61,7 @@ type KeyCommand struct {
 var (
 	// Common commands for all views
 	CommonCommands = []KeyCommand{
-		{Type: CmdQuit, Keys: []string{"q"}, Description: "Quit application"},
+		{Type: CmdQuit, Keys: []string{"q", "Q", "ctrl+c"}, Description: "Quit application"},
 	}
 
 	// List view commands
