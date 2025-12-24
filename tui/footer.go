@@ -26,8 +26,8 @@ func (m *Model) renderBuildFooter() string {
 
 	// Contextual commands based on the highlighted build
 	contextualCommands := []string{}
-	if len(m.builds) > 0 && m.cursor < len(m.builds) {
-		build := m.builds[m.cursor]
+	if len(m.List.Builds) > 0 && m.List.Cursor < len(m.List.Builds) {
+		build := m.List.Builds[m.List.Cursor]
 		if build.Status == model.StateLocal {
 			contextualCommands = append(contextualCommands,
 				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),

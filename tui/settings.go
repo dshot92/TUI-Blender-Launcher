@@ -40,15 +40,18 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 	// Helper to render a text input setting
 	renderTextSetting := func(index int, label, description string) string {
 		var sb strings.Builder
-		isFocused := (m.focusIndex == index)
+		isFocused := (m.Settings.FocusIndex == index)
 		if isFocused {
 			sb.WriteString(labelStyleFocused.Render(label))
 		} else {
 			sb.WriteString(labelStyle.Render(label))
 		}
 		sb.WriteString(" ")
-
-		inputView := m.settingsInputs[index].View()
+		// Use m.Settings.Inputs instead of m.settingsInputs.
+		// However, it seems settingsInputs is not directly available in SettingsModel as "Inputs",
+		// let me check SettingsModel definition.
+		// It was []textinput.Model named Inputs (public).
+		inputView := m.Settings.Inputs[index].View()
 		if isFocused {
 			sb.WriteString(inputStyleFocused.Render(inputView))
 		} else {
@@ -62,11 +65,10 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		return sectionStyle.Render(sb.String())
 	}
 
-	// Helper to render the build type (horizontal selector) setting
 	renderBuildTypeSetting := func(label, description string) string {
 		var sb strings.Builder
 		// Focused when the build type setting is active (last setting)
-		isFocused := (m.focusIndex == len(m.settingsInputs))
+		isFocused := (m.Settings.FocusIndex == len(m.Settings.Inputs))
 		if isFocused {
 			sb.WriteString(labelStyleFocused.Render(label))
 		} else {
@@ -75,8 +77,8 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		sb.WriteString(" ")
 
 		var horizontalOptions strings.Builder
-		selectedBuildType := m.buildType
-		for _, option := range m.buildTypeOptions {
+		selectedBuildType := m.Settings.BuildType
+		for _, option := range m.Settings.BuildTypeOptions {
 			if option == selectedBuildType {
 				horizontalOptions.WriteString(selectedOptionStyle.Render(option))
 			} else {

@@ -27,12 +27,14 @@ func NewStyle() Style {
 		HeaderCell: lp.NewStyle().
 			Foreground(baseText).
 			Background(bg).
+			Align(lp.Center).
 			Bold(true),
 
 		SelectedHeaderCell: lp.NewStyle().
 			Foreground(baseText).
 			Background(hl).
 			Bold(true).
+			Align(lp.Center).
 			BorderForeground(hl),
 
 		RegularRow: lp.NewStyle().

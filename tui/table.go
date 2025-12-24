@@ -274,17 +274,17 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 	columns := GetBuildColumns(m.terminalWidth)
 
 	// Calculate visible range
-	endIndex := m.startIndex + visibleRowsCount
-	if endIndex > len(m.builds) {
-		endIndex = len(m.builds)
+	endIndex := m.List.StartIndex + visibleRowsCount
+	if endIndex > len(m.List.Builds) {
+		endIndex = len(m.List.Builds)
 	}
 
 	// Map to track which build IDs we've processed in this render pass
 	processedBuilds := make(map[string]bool)
 
 	// Only render rows in the visible range
-	for i := m.startIndex; i < endIndex; i++ {
-		build := m.builds[i]
+	for i := m.List.StartIndex; i < endIndex; i++ {
+		build := m.List.Builds[i]
 
 		// Create a buildID to check for download state
 		buildID := build.Version
@@ -300,13 +300,14 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 
 		// Check if this is a downloading or extracting build
 		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			// Check in current model's download states
-			if state, exists := m.downloadStates[buildID]; exists {
+			// Check in current model's download states using ListModel or ProgressModel
+			// ProgressModel has DownloadStates
+			if state, exists := m.Progress.DownloadStates[buildID]; exists {
 				downloadState = state
 
 				// Always update last render state for downloads - but don't check for changes
 				// to avoid skipping download renderings
-				m.lastRenderState[buildID] = state.Progress
+				m.List.LastRenderState[buildID] = state.Progress
 			}
 		} else {
 			// Fallback to checking in commands downloads manager
@@ -317,7 +318,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 
 		// Always render downloading/extracting rows, never skip them
 		// Create and render row; highlight if this is the current row
-		row := NewRow(build, i == m.cursor, downloadState)
+		row := NewRow(build, i == m.List.Cursor, downloadState)
 		rowText := row.Render(columns, m.Style)
 
 		// Ensure each row has proper width
@@ -328,9 +329,9 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 	}
 
 	// Clean up lastRenderState for builds that are no longer visible/processing
-	for buildID := range m.lastRenderState {
+	for buildID := range m.List.LastRenderState {
 		if !processedBuilds[buildID] {
-			delete(m.lastRenderState, buildID)
+			delete(m.List.LastRenderState, buildID)
 		}
 	}
 
@@ -342,7 +343,7 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	var output strings.Builder
 	newlineStyle := lp.NewStyle().Render("\n")
 
-	if len(m.builds) == 0 {
+	if len(m.List.Builds) == 0 {
 		// No builds to display
 		var msg string = "No Blender builds found locally or online."
 
@@ -362,14 +363,14 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	var headerCells []string
 	for _, col := range columns {
 		headerText := col.Name
-		if col.Index == m.sortColumn {
-			if m.sortReversed {
+		if col.Index == m.List.SortColumn {
+			if m.List.SortReversed {
 				headerText += " ↓"
 			} else {
 				headerText += " ↑"
 			}
 		}
-		if col.Index == m.sortColumn {
+		if col.Index == m.List.SortColumn {
 			headerCells = append(headerCells, m.Style.SelectedHeaderCell.Width(col.Width).Render(headerText))
 		} else {
 			headerCells = append(headerCells, m.Style.HeaderCell.Width(col.Width).Render(headerText))
@@ -404,19 +405,4 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	return finalOutput
 }
 
-// updateSortColumn handles lateral key events for sorting columns.
-// It updates the Model's sortColumn value based on the key pressed.
-// Allowed values range from 0 (Version) to 6 (Build Date).
-func (m *Model) updateSortColumn(key string) {
-	switch key {
-	case "left":
-		if m.sortColumn > 0 {
-			m.sortColumn--
-		}
-	case "right":
-		// Use columnConfigs map to determine total column count
-		if m.sortColumn < len(columnConfigs)-1 {
-			m.sortColumn++
-		}
-	}
-}
+// function updateSortColumn is removed
