@@ -30,7 +30,7 @@ func (m *Model) renderPageForView() string {
 	var footer string
 
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		content = m.renderSettingsContent(contentHeight)
+		content = m.Settings.View()
 		footer = m.renderSettingsFooter()
 	} else {
 		content = m.renderBuildContent(contentHeight)

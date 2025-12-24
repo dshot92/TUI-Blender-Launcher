@@ -55,6 +55,7 @@ func (m *Model) UpdateWindowSize(width, height int) {
 	m.terminalHeight = height
 
 	m.List.TerminalHeight = height
+	m.Settings.SetWidth(width)
 }
 
 // SyncDownloadStates ensures the model has the latest download states from the commands manager

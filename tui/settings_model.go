@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"strings"
+
 	"TUI-Blender-Launcher/config"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	lp "github.com/charmbracelet/lipgloss"
 )
 
 // SettingsModel handles the state and logic for the settings view.
@@ -17,7 +20,8 @@ type SettingsModel struct {
 	BuildTypeOptions []string
 	BuildTypeIndex   int
 	Style            Style
-	Config           config.Config // Store a copy or reference if needed for validation/saving
+	Config           config.Config
+	width            int
 }
 
 // NewSettingsModel creates a new SettingsModel.
@@ -39,6 +43,8 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 	t.Placeholder = cfg.DownloadDir
 	t.SetValue(cfg.DownloadDir)
 	t.CharLimit = 256
+	// We'll set width dynamically in View or SetWidth if possible,
+	// but for now initialized width is okay.
 	t.Width = 50
 	m.Inputs[0] = t
 
@@ -68,9 +74,133 @@ func (m SettingsModel) Init() tea.Cmd {
 	return nil
 }
 
+// SetWidth updates the width of the settings model
+func (m *SettingsModel) SetWidth(w int) {
+	m.width = w
+}
+
 // View returns the string representation of the model.
 func (m SettingsModel) View() string {
-	return ""
+	var b strings.Builder
+
+	// Calculate effective width for alignment
+	effectiveWidth := m.width
+	if effectiveWidth <= 0 {
+		effectiveWidth = 80 // Fallback
+	}
+
+	// Styles
+	// Helper to get alignment based on index
+	getAlign := func(index int) lp.Position {
+		switch index {
+		case 0:
+			return lp.Left
+		case 1:
+			return lp.Center
+		case 2:
+			return lp.Right
+		default:
+			return lp.Left
+		}
+	}
+
+	// Common base styles
+	labelBase := lp.NewStyle().Bold(true).Foreground(lp.Color(highlightColor))
+	labelFocusedBase := lp.NewStyle().Bold(true).Background(lp.Color(highlightColor)).Foreground(lp.Color(backgroundColor))
+
+	// Content styles - Always Left Aligned as requested ("setting portion ... make them all left aligned")
+	inputBase := lp.NewStyle().MarginLeft(2).Align(lp.Left)
+	descBase := lp.NewStyle().Italic(true).Foreground(lp.Color("241")).Align(lp.Left)
+
+	// Section takes full width
+	sectionBase := lp.NewStyle().MarginBottom(2).Width(effectiveWidth)
+
+	optionStyle := lp.NewStyle().MarginRight(1).Padding(0, 1)
+	selectedOptionStyle := lp.NewStyle().MarginRight(1).Padding(0, 1).
+		Foreground(lp.Color(textColor)).Background(lp.Color(highlightColor))
+
+	// Helper to render a text input setting
+	renderTextSetting := func(index int, label, description string) string {
+		labelAlign := getAlign(index)
+
+		// Labels: Mixed Alignment
+		lblStyle := labelBase.Align(labelAlign).Width(effectiveWidth)
+		lblStyleFocused := labelFocusedBase.Align(labelAlign).Width(effectiveWidth)
+
+		var sb strings.Builder
+		isFocused := (m.FocusIndex == index)
+
+		if isFocused {
+			sb.WriteString(lblStyleFocused.Render(label))
+		} else {
+			sb.WriteString(lblStyle.Render(label))
+		}
+		sb.WriteString("\n")
+
+		// Input: Always Left Aligned
+		inputView := m.Inputs[index].View()
+		inpStyle := inputBase.Width(effectiveWidth)
+
+		sb.WriteString(inpStyle.Render(inputView))
+		sb.WriteString("\n")
+
+		// Description: Always Left Aligned
+		dStyle := descBase.Width(effectiveWidth)
+		sb.WriteString(dStyle.Render(description))
+
+		// Wrap in section style
+		return sectionBase.Render(sb.String())
+	}
+
+	renderBuildTypeSetting := func(label, description string) string {
+		index := 2                    // Hardcoded as 3rd item
+		labelAlign := getAlign(index) // Right
+
+		// Labels: Mixed Alignment
+		lblStyle := labelBase.Align(labelAlign).Width(effectiveWidth)
+		lblStyleFocused := labelFocusedBase.Align(labelAlign).Width(effectiveWidth)
+
+		var sb strings.Builder
+		isFocused := (m.FocusIndex == len(m.Inputs))
+
+		if isFocused {
+			sb.WriteString(lblStyleFocused.Render(label))
+		} else {
+			sb.WriteString(lblStyle.Render(label))
+		}
+		sb.WriteString("\n")
+
+		var horizontalOptions strings.Builder
+		selectedBuildType := m.BuildType
+		for _, option := range m.BuildTypeOptions {
+			if option == selectedBuildType {
+				horizontalOptions.WriteString(selectedOptionStyle.Render(option))
+			} else {
+				horizontalOptions.WriteString(optionStyle.Render(option))
+			}
+		}
+
+		// Options: Always Left Aligned
+		// Using MarginLeft(2) to match inputBase for consistency or just Left?
+		// User said "make them all left aligned". Input has MarginLeft(2). Let's match it usually.
+		optsStyle := lp.NewStyle().MarginLeft(2).Align(lp.Left).Width(effectiveWidth)
+		sb.WriteString(optsStyle.Render(horizontalOptions.String()))
+		sb.WriteString("\n")
+
+		// Description: Always Left Aligned
+		dStyle := descBase.Width(effectiveWidth)
+		sb.WriteString(dStyle.Render(description))
+
+		return sectionBase.Render(sb.String())
+	}
+
+	// Render each setting
+	b.WriteString(renderTextSetting(0, "Download Directory", "Path where Blender builds will be stored."))
+	b.WriteString(renderTextSetting(1, "Version Filter", "Filter versions (e.g., '4.2', '3.6'). Leave empty for all."))
+	b.WriteString(renderBuildTypeSetting("Build Type", "Select default build type to fetch."))
+
+	// Final container
+	return lp.NewStyle().Width(effectiveWidth).Padding(1, 2).Render(b.String())
 }
 
 // Update handles update messages for the settings model.
@@ -95,7 +225,7 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.updateFocusStyles()
-					return m, nil // Return *SettingsModel as tea.Model? No, usually sub-models return self and cmd
+					return m, nil
 
 				case CmdMoveUp:
 					if !m.EditMode {
@@ -143,15 +273,19 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *SettingsModel) updateFocusStyles() {
 	for i := range m.Inputs {
 		if i == m.FocusIndex {
-			m.Inputs[i].PromptStyle = m.Style.SelectedRow
+			// m.Inputs[i].PromptStyle = m.Style.SelectedRow // This was causing some issues with textinput style maybe?
+			// Let's use specific textinput styles if possible or keep simple
+			// The cursor style is handled by textinput itself.
 			if m.EditMode {
 				m.Inputs[i].Focus()
+				m.Inputs[i].TextStyle = m.Style.SelectedRow
 			} else {
 				m.Inputs[i].Blur()
+				m.Inputs[i].TextStyle = m.Style.RegularRow
 			}
 		} else {
-			m.Inputs[i].PromptStyle = m.Style.RegularRow
 			m.Inputs[i].Blur()
+			m.Inputs[i].TextStyle = m.Style.RegularRow
 		}
 	}
 }
