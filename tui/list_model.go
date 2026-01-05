@@ -171,8 +171,8 @@ func (m *ListModel) EnsureCursorVisible() {
 
 // UpdateSortColumn changes the sort column
 func (m *ListModel) UpdateSortColumn(direction string) {
-	// Total columns: Version, Date, Size, Status
-	numColumns := 4
+	// Total columns: Version, Status, Branch, Type, Hash, Size, Build Date
+	numColumns := 7
 
 	if direction == "left" {
 		m.SortColumn--
