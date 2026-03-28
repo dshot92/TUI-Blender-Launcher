@@ -47,10 +47,16 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
-	// Create download client
+	// Create download client with configurable timeout
 	client := grab.NewClient()
 	client.HTTPClient = &http.Client{
-		// Timeout: 30 * time.Second,
+		Timeout: 30 * time.Second, // Set reasonable timeout to prevent hanging connections
+		Transport: &http.Transport{
+			IdleConnTimeout:       90 * time.Second,
+			DisableCompression:    false,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
 	}
 	client.UserAgent = "TUI-Blender-Launcher"
 
@@ -67,17 +73,28 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 	// Start download
 	resp := client.Do(req)
 
-	// Wait for completion
-	select {
-	case <-resp.Done:
+	// Create a channel to signal completion
+	done := make(chan error, 1)
+	go func() {
+		<-resp.Done
 		if err := resp.Err(); err != nil {
-			return fmt.Errorf("download failed: %w", err)
+			done <- fmt.Errorf("download failed: %w", err)
+			return
+		}
+		done <- nil
+	}()
+
+	// Wait for completion, cancellation, or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			return err
 		}
 		return nil
 	case <-cancelCh:
 		return ErrCancelled
-	case <-time.After(10 * time.Minute):
-		return ErrIdleTimeout
+	case <-time.After(30 * time.Minute): // Increased timeout for large files
+		return fmt.Errorf("download timed out after 30 minutes: %w", ErrIdleTimeout)
 	}
 }
 
@@ -302,7 +319,7 @@ extractLoop:
 		}
 	}
 
-	// Remove the cleanup label and just have the cleanup code
+	// Wait for all workers to complete
 	wg.Wait()
 	close(errChan)
 	for err := range errChan {

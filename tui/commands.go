@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/cavaliergopher/grab/v3"
@@ -22,6 +23,7 @@ import (
 type DownloadManager struct {
 	states map[string]*model.DownloadState
 	cfg    config.Config
+	mu     sync.Mutex
 }
 
 // NewDownloadManager creates a new download manager
@@ -54,6 +56,10 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		buildID = build.Version + "-" + build.Hash[:8]
 	}
 
+	// Lock access to states map to prevent race conditions
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
 	// Clean up previous state if it was Failed or Cancelled before starting anew
 	if state, exists := dm.states[buildID]; exists {
 		if state.BuildState == model.StateFailed || state.BuildState == model.StateCancelled {
@@ -68,7 +74,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	// Setup download state
 	now := time.Now()
 	cancelCh := make(chan struct{})
-	dm.states[buildID] = &model.DownloadState{
+	downloadState := &model.DownloadState{
 		BuildID:     buildID,
 		BuildState:  model.StateDownloading,
 		StartTime:   now,
@@ -76,12 +82,13 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		Progress:    0.0,
 		CancelCh:    cancelCh,
 	}
+	dm.states[buildID] = downloadState
 
 	// Create a temporary directory for downloads if it doesn't exist
 	downloadTempDir := filepath.Join(dm.cfg.DownloadDir, download.DownloadingDir)
 	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
 		// Handle error creating download directory
-		dm.states[buildID].BuildState = model.StateFailed
+		downloadState.BuildState = model.StateFailed
 		programCh <- downloadCompleteMsg{
 			buildVersion: build.Version,
 			err:          fmt.Errorf("failed to create download directory: %w", err),
@@ -127,7 +134,12 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		// Create the request
 		req, err := grab.NewRequest(downloadPath, build.DownloadURL)
 		if err != nil {
-			dm.states[buildID].BuildState = model.StateFailed
+			dm.mu.Lock()
+			if state := dm.states[buildID]; state != nil {
+				state.BuildState = model.StateFailed
+				state.Progress = 0.0
+			}
+			dm.mu.Unlock()
 			programCh <- downloadCompleteMsg{
 				buildVersion: build.Version,
 				err:          fmt.Errorf("failed to create download request: %w", err),
@@ -156,8 +168,10 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			case <-ticker.C:
 				// Update download state with grab response status
 				now := time.Now()
+				dm.mu.Lock()
 				state := dm.states[buildID]
 				if state == nil {
+					dm.mu.Unlock()
 					break downloadLoop // State was deleted, exit loop
 				}
 
@@ -210,11 +224,13 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 				state.Current = downloaded
 				state.Total = total
 				state.Speed = speed
+				dm.mu.Unlock()
 
 			case <-resp.Done:
 				// Download completed or failed
 				if err := resp.Err(); err != nil {
 					// Handle download error
+					dm.mu.Lock()
 					state := dm.states[buildID]
 					if state != nil {
 						// Check if this was a cancellation
@@ -225,6 +241,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 							state.Progress = 0.0
 						}
 					}
+					dm.mu.Unlock()
 
 					// Clean up partial download
 					go func() {
@@ -240,11 +257,13 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 				}
 
 				// Download completed successfully, now proceed to extraction
+				dm.mu.Lock()
 				state := dm.states[buildID]
 				if state != nil {
 					state.BuildState = model.StateExtracting
 					state.Progress = 0.0 // Reset progress for extraction phase
 				}
+				dm.mu.Unlock()
 
 				// Setup extraction progress callback
 				extractionAdapter := func(downloadedBytes, totalBytes int64) {
@@ -253,13 +272,16 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 						progress := float64(downloadedBytes) / float64(totalBytes)
 
 						// Update state
+						dm.mu.Lock()
 						state := dm.states[buildID]
 						if state == nil {
+							dm.mu.Unlock()
 							return
 						}
 
 						select {
 						case <-cancelCh:
+							dm.mu.Unlock()
 							return
 						default:
 						}
@@ -270,6 +292,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 						state.Current = downloadedBytes
 						state.Total = totalBytes
 						state.BuildState = model.StateExtracting
+						dm.mu.Unlock()
 					}
 				}
 
@@ -277,8 +300,10 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 				extractedPath, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, extractionAdapter, cancelCh)
 
 				// Update final state based on extraction result
+				dm.mu.Lock()
 				state = dm.states[buildID]
 				if state == nil {
+					dm.mu.Unlock()
 					return
 				}
 
@@ -295,6 +320,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 					state.BuildState = model.StateLocal
 					state.Progress = 1.0
 				}
+				dm.mu.Unlock()
 
 				// Send completion message
 				programCh <- downloadCompleteMsg{
@@ -306,6 +332,13 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 
 			case <-cancelCh:
 				// Download was cancelled
+				dm.mu.Lock()
+				state := dm.states[buildID]
+				if state != nil {
+					state.BuildState = model.StateCancelled
+					state.Progress = 0.0
+				}
+				dm.mu.Unlock()
 				break downloadLoop
 			}
 		}
