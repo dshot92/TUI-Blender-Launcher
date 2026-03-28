@@ -178,20 +178,25 @@ func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	}
 	// Only allow deleting local builds or builds that can be updated
 	if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
+		deletedHash := selectedBuild.Hash
 		return m, func() tea.Msg {
-			success, err := local.DeleteBuild(m.config.DownloadDir, selectedBuild.Version)
+			success, err := local.DeleteBuild(m.config.DownloadDir, deletedHash)
 			if err != nil {
 				return errMsg{err}
 			}
 			if !success {
-				return errMsg{fmt.Errorf("failed to delete build %s", selectedBuild.Version)}
+				return errMsg{fmt.Errorf("failed to delete build")}
 			}
-			// Remove the deleted build from the list
-			// ... (requires manipulating ListModel, maybe better to just rescan)
-			return m.commands.ScanLocalBuilds()()
+			return buildDeletedMsg{hash: deletedHash}
 		}
 	}
 	return m, nil
+}
+
+// handleBuildDeleted processes a successful build deletion
+func (m *Model) handleBuildDeleted(msg buildDeletedMsg) (tea.Model, tea.Cmd) {
+	m.List.RemoveBuildByHash(msg.hash)
+	return m, m.commands.ScanLocalBuilds()
 }
 
 // handleLocalBuildsScanned processes the result of scanning local builds

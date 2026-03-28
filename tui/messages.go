@@ -31,6 +31,9 @@ type (
 		extractedPath string
 		err           error
 	}
+	buildDeletedMsg struct { // Build was deleted from disk
+		hash string
+	}
 	// Error message
 	errMsg struct{ err error }
 

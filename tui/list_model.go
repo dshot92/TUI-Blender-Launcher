@@ -192,6 +192,20 @@ func (m *ListModel) SortBuilds() {
 	m.Builds = model.SortBuilds(m.Builds, m.SortColumn, m.SortReversed)
 }
 
+// RemoveBuildByHash removes a build from the list by hash, adjusts cursor
+func (m *ListModel) RemoveBuildByHash(hash string) {
+	for i, build := range m.Builds {
+		if build.Hash == hash {
+			m.Builds = append(m.Builds[:i], m.Builds[i+1:]...)
+			if m.Cursor >= len(m.Builds) && m.Cursor > 0 {
+				m.Cursor--
+			}
+			m.EnsureCursorVisible()
+			return
+		}
+	}
+}
+
 // GetSelectedBuild returns the currently selected build, or nil if none
 func (m *ListModel) GetSelectedBuild() *model.BlenderBuild {
 	if len(m.Builds) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Builds) {

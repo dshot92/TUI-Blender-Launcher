@@ -130,6 +130,9 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case downloadCompleteMsg:
 		return m.handleDownloadCompleteMsg(msg)
 
+	case buildDeletedMsg:
+		return m.handleBuildDeleted(msg)
+
 	case tickMsg:
 		return m.handleTickMsg(msg)
 

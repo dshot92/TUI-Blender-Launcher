@@ -97,30 +97,37 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 	return lookupMap, nil
 }
 
-// DeleteBuild finds and deletes a local build by version. Returns true if deletion was successful.
-func DeleteBuild(downloadDir string, version string) (bool, error) {
+// DeleteBuild finds and deletes a local build by hash. Returns true if deletion was successful.
+func DeleteBuild(downloadDir string, hash string) (bool, error) {
 	entries, err := os.ReadDir(downloadDir)
 	if err != nil {
 		return false, fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			dirPath := filepath.Join(downloadDir, entry.Name())
-			buildInfo, err := ReadBuildInfo(dirPath)
-			if err != nil {
-				continue
-			}
-			if buildInfo != nil && buildInfo.Version == version {
-				if err := os.RemoveAll(dirPath); err != nil {
-					return false, fmt.Errorf("failed to delete build directory %s: %w", dirPath, err)
-				}
-				return true, nil
-			}
+		if !entry.IsDir() {
+			continue
 		}
+
+		dirPath := filepath.Join(downloadDir, entry.Name())
+		buildInfo, err := ReadBuildInfo(dirPath)
+		if err != nil {
+			return false, fmt.Errorf("failed to read build info from %s: %w", dirPath, err)
+		}
+		if buildInfo == nil {
+			continue
+		}
+		if buildInfo.Hash != hash {
+			continue
+		}
+
+		if err := os.RemoveAll(dirPath); err != nil {
+			return false, fmt.Errorf("failed to delete build directory %s: %w", dirPath, err)
+		}
+		return true, nil
 	}
 
-	return false, nil
+	return false, fmt.Errorf("build not found with hash: %s", hash)
 }
 
 // LaunchBlenderCmd creates a command to launch Blender for a specific version.
