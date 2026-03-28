@@ -649,22 +649,6 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		}
 	}
 
-	// If we found an existing build directory, back it up
-	if existingBuildDir != "" {
-		oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
-		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
-			return "", fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
-		}
-		timestamp := time.Now().Format("20060102_150405")
-		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
-		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
-		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
-			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
-				return "", fmt.Errorf("failed to replace old build dir: %w", err)
-			}
-		}
-	}
-
 	// 3. Extract based on archive type
 	extractionCb := func(progress float64) {
 		if progressCb != nil {
@@ -701,6 +685,22 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractErr = extractZip(downloadPath, downloadBaseDir, extractionCb, cancelCh)
 	} else {
 		return "", fmt.Errorf("unsupported archive format: %s", downloadFileName)
+	}
+
+	// Handle extraction error - only backup old build if extraction succeeded
+	if extractErr == nil && existingBuildDir != "" {
+		oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
+		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
+			return extractedRootDir, fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
+		}
+		timestamp := time.Now().Format("20060102_150405")
+		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
+		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
+		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
+			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
+				return extractedRootDir, fmt.Errorf("failed to replace old build dir: %w", err)
+			}
+		}
 	}
 
 	// Handle extraction error
