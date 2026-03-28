@@ -505,24 +505,10 @@ func (c *Commands) DoDownload(build model.BlenderBuild) tea.Cmd {
 	}
 }
 
-// StartTicker starts a ticker to regularly update the UI during downloads
+// StartTicker starts the initial tick to trigger UI updates
 func (c *Commands) StartTicker() tea.Cmd {
 	return func() tea.Msg {
-		ticker := time.NewTicker(500 * time.Millisecond)
-		done := make(chan bool)
-
-		go func() {
-			for {
-				select {
-				case <-done:
-					return
-				case t := <-ticker.C:
-					programCh <- tickMsg(t)
-				}
-			}
-		}()
-
-		return nil
+		return tickMsg(time.Now())
 	}
 }
 

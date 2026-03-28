@@ -48,6 +48,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.currentView {
 	case viewSettings, viewInitialSetup:
+		// Handle tick messages at top level to maintain update chain even in settings
+		if _, ok := msg.(tickMsg); ok {
+			return m.handleTickMsg(msg.(tickMsg))
+		}
+
 		var newSettings tea.Model
 		newSettings, cmd = m.Settings.Update(msg) // settings_model Update might perform specific actions
 		m.Settings = *newSettings.(*SettingsModel)

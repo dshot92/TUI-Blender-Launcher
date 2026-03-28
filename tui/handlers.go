@@ -203,8 +203,39 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 		return m, nil
 	}
 
-	// Set builds to local builds only
-	m.List.Builds = msg.builds
+	// Preserve local builds and builds that are currently downloading/extracting from the current list.
+	var preservedBuilds []model.BlenderBuild
+	for _, build := range m.List.Builds {
+		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			preservedBuilds = append(preservedBuilds, build)
+		}
+	}
+
+	// Start with preserved builds
+	m.List.Builds = preservedBuilds
+
+	// Add scanned local builds, avoiding duplicates
+	for _, scannedBuild := range msg.builds {
+		isDuplicate := false
+		for i, existingBuild := range m.List.Builds {
+			// Check if builds are the same (by version and hash if available)
+			if existingBuild.Version == scannedBuild.Version {
+				if existingBuild.Hash == scannedBuild.Hash || (existingBuild.Hash == "" && scannedBuild.Hash == "") {
+					isDuplicate = true
+					// Preserve the status of the existing build if it's downloading/extracting
+					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
+						scannedBuild.Status = existingBuild.Status
+					}
+					// Replace the existing build with the scanned one
+					m.List.Builds[i] = scannedBuild
+					break
+				}
+			}
+		}
+		if !isDuplicate {
+			m.List.Builds = append(m.List.Builds, scannedBuild)
+		}
+	}
 
 	// Apply version filter if set
 	if m.config.VersionFilter != "" {
@@ -230,17 +261,39 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Preserve only local builds from the current list.
-	var localBuilds []model.BlenderBuild
+	// Preserve local builds and builds that are currently downloading/extracting from the current list.
+	var preservedBuilds []model.BlenderBuild
 	for _, build := range m.List.Builds {
-		if build.Status == model.StateLocal {
-			localBuilds = append(localBuilds, build)
+		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			preservedBuilds = append(preservedBuilds, build)
 		}
 	}
 
-	// Start with local builds + newly fetched builds.
-	m.List.Builds = localBuilds
-	m.List.Builds = append(m.List.Builds, msg.builds...)
+	// Start with preserved builds
+	m.List.Builds = preservedBuilds
+
+	// Add newly fetched builds, avoiding duplicates
+	for _, newBuild := range msg.builds {
+		isDuplicate := false
+		for i, existingBuild := range m.List.Builds {
+			// Check if builds are the same (by version and hash if available)
+			if existingBuild.Version == newBuild.Version {
+				if existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "") {
+					isDuplicate = true
+					// Preserve the status of the existing build if it's downloading/extracting
+					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
+						newBuild.Status = existingBuild.Status
+					}
+					// Replace the existing build with the new one (to get updated info)
+					m.List.Builds[i] = newBuild
+					break
+				}
+			}
+		}
+		if !isDuplicate {
+			m.List.Builds = append(m.List.Builds, newBuild)
+		}
+	}
 
 	// Apply version filter if set *before* updating status
 	if m.config.VersionFilter != "" {
@@ -264,7 +317,7 @@ func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderB
 	filtered := make([]model.BlenderBuild, 0)
 	for _, build := range builds {
 		// Always keep local builds regardless of version filter
-		if build.Status == model.StateLocal {
+		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
 			filtered = append(filtered, build)
 			continue
 		}
@@ -279,11 +332,39 @@ func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderB
 
 // handleBuildsUpdated finalizes the build list after determining local/online status
 func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
-	// Replace builds with updated ones that have correct status
-	m.List.Builds = msg.builds
+	// Preserve local builds and builds that are currently downloading/extracting from the current list.
+	var preservedBuilds []model.BlenderBuild
+	for _, build := range m.List.Builds {
+		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			preservedBuilds = append(preservedBuilds, build)
+		}
+	}
 
-	// Sync logic... (skipped simple sync logic for brevity as it's handled in ProgressModel essentially)
-	// But we need to cleanup downloadStates
+	// Start with preserved builds
+	m.List.Builds = preservedBuilds
+
+	// Add newly fetched builds, avoiding duplicates
+	for _, newBuild := range msg.builds {
+		isDuplicate := false
+		for i, existingBuild := range m.List.Builds {
+			// Check if builds are the same (by version and hash if available)
+			if existingBuild.Version == newBuild.Version {
+				if existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "") {
+					isDuplicate = true
+					// Preserve the status of the existing build if it's downloading/extracting
+					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
+						newBuild.Status = existingBuild.Status
+					}
+					// Replace the existing build with the new one (to get updated info)
+					m.List.Builds[i] = newBuild
+					break
+				}
+			}
+		}
+		if !isDuplicate {
+			m.List.Builds = append(m.List.Builds, newBuild)
+		}
+	}
 
 	// Apply version filter if set
 	if m.config.VersionFilter != "" {
