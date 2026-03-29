@@ -337,37 +337,29 @@ func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderB
 
 // handleBuildsUpdated finalizes the build list after determining local/online status
 func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
-	// Preserve local builds and builds that are currently downloading/extracting from the current list.
-	var preservedBuilds []model.BlenderBuild
+	// Create a map of downloading/extracting builds from the current list to restore later
+	downloadStates := make(map[string]model.BuildState)
 	for _, build := range m.List.Builds {
-		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			preservedBuilds = append(preservedBuilds, build)
+		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			buildID := build.Version
+			if build.Hash != "" {
+				buildID = build.Version + "-" + build.Hash[:8]
+			}
+			downloadStates[buildID] = build.Status
 		}
 	}
 
-	// Start with preserved builds
-	m.List.Builds = preservedBuilds
+	// Use msg.builds as the authoritative source (they have correct Local/Online/Update status)
+	m.List.Builds = msg.builds
 
-	// Add newly fetched builds, avoiding duplicates
-	for _, newBuild := range msg.builds {
-		isDuplicate := false
-		for i, existingBuild := range m.List.Builds {
-			// Check if builds are the same (by version and hash if available)
-			if existingBuild.Version == newBuild.Version {
-				if existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "") {
-					isDuplicate = true
-					// Preserve the status of the existing build if it's downloading/extracting
-					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
-						newBuild.Status = existingBuild.Status
-					}
-					// Replace the existing build with the new one (to get updated info)
-					m.List.Builds[i] = newBuild
-					break
-				}
-			}
+	// Restore downloading/extracting statuses by matching version/hash
+	for i := range m.List.Builds {
+		buildID := m.List.Builds[i].Version
+		if m.List.Builds[i].Hash != "" {
+			buildID = m.List.Builds[i].Version + "-" + m.List.Builds[i].Hash[:8]
 		}
-		if !isDuplicate {
-			m.List.Builds = append(m.List.Builds, newBuild)
+		if status, exists := downloadStates[buildID]; exists {
+			m.List.Builds[i].Status = status
 		}
 	}
 
