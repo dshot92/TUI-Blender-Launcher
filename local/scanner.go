@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -97,7 +98,6 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 	return lookupMap, nil
 }
 
-// DeleteBuild finds and deletes a local build by hash. Returns true if deletion was successful.
 func DeleteBuild(downloadDir string, hash string) (bool, error) {
 	entries, err := os.ReadDir(downloadDir)
 	if err != nil {
@@ -121,8 +121,15 @@ func DeleteBuild(downloadDir string, hash string) (bool, error) {
 			continue
 		}
 
-		if err := os.RemoveAll(dirPath); err != nil {
-			return false, fmt.Errorf("failed to delete build directory %s: %w", dirPath, err)
+		oldBuildsDir := filepath.Join(downloadDir, download.OldBuildsDir)
+		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
+			return false, fmt.Errorf("failed to create %s directory: %w", download.OldBuildsDir, err)
+		}
+		timestamp := time.Now().Format("20060102_150405")
+		oldBuildName := fmt.Sprintf("%s_%s", entry.Name(), timestamp)
+		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
+		if err := os.Rename(dirPath, oldBuildPath); err != nil {
+			return false, fmt.Errorf("failed to move build to %s: %w", download.OldBuildsDir, err)
 		}
 		return true, nil
 	}
