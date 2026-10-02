@@ -146,12 +146,29 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		},
 	}
 
-	xzReader, err := xz.NewReader(progressBuffer)
-	if err != nil {
-		return fmt.Errorf("failed to create xz reader: %w", err)
+	// Decode with the system xz (liblzma) when available: the pure-Go
+	// decoder is orders of magnitude slower. progressBuffer feeds the
+	// child's stdin, so progress still measures compressed bytes consumed.
+	// Any startup failure falls back to the pure-Go decoder.
+	var tarInput io.Reader
+	var xzChild *systemXzStream
+	if stream, err := newSystemXzReader(progressBuffer, cancelCh); err == nil {
+		xzChild = stream
+		defer func() {
+			// Decode errors surface mid-stream at tar read time;
+			// cleanup just reaps the child.
+			_ = xzChild.cleanup()
+		}()
+		tarInput = stream.rc
+	} else {
+		xzReader, err := xz.NewReader(progressBuffer)
+		if err != nil {
+			return fmt.Errorf("failed to create xz reader: %w", err)
+		}
+		tarInput = xzReader
 	}
 
-	bufferedXzReader := bufio.NewReaderSize(xzReader, bufferSize)
+	bufferedXzReader := bufio.NewReaderSize(tarInput, bufferSize)
 	tarReader := tar.NewReader(bufferedXzReader)
 
 	copyBuffer := make([]byte, bufferSize)
@@ -163,7 +180,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	const maxWorkers = 4
 	sem := make(chan struct{}, maxWorkers)
 	var wg sync.WaitGroup
-	errChan := make(chan error, maxWorkers)
 	var firstErr error
 	var errLock sync.Mutex
 
@@ -239,17 +255,17 @@ extractLoop:
 						case sem <- struct{}{}: // Acquire semaphore
 							defer func() { <-sem }() // Release semaphore
 						case <-cancelCh:
-							errChan <- ErrCancelled
+							setFirstError(ErrCancelled)
 							return
 						}
 
 						if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-							errChan <- fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err)
+							setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 							return
 						}
 
 						if err := os.WriteFile(targetPath, contents, os.FileMode(fileMode)); err != nil {
-							errChan <- fmt.Errorf("failed to write file %s: %w", targetPath, err)
+							setFirstError(fmt.Errorf("failed to write file %s: %w", targetPath, err))
 							return
 						}
 					}(targetPath, header.Mode, fileContents)
@@ -319,12 +335,9 @@ extractLoop:
 		}
 	}
 
-	// Wait for all workers to complete
+	// Wait for all workers to complete. Worker errors are recorded via
+	// setFirstError directly (no channel: an error burst must not block).
 	wg.Wait()
-	close(errChan)
-	for err := range errChan {
-		setFirstError(err)
-	}
 
 	if progressCb != nil {
 		progressCb(1.0)
@@ -404,7 +417,6 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 	const maxWorkers = 4
 	sem := make(chan struct{}, maxWorkers)
 	var wg sync.WaitGroup
-	errChan := make(chan error, maxWorkers)
 	var firstErr error
 	var errLock sync.Mutex
 
@@ -464,25 +476,25 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 				case sem <- struct{}{}: // Acquire semaphore
 					defer func() { <-sem }() // Release semaphore
 				case <-cancelCh:
-					errChan <- ErrCancelled
+					setFirstError(ErrCancelled)
 					return
 				}
 
 				rc, err := file.Open()
 				if err != nil {
-					errChan <- fmt.Errorf("failed to open zip file entry %s: %w", file.Name, err)
+					setFirstError(fmt.Errorf("failed to open zip file entry %s: %w", file.Name, err))
 					return
 				}
 				defer rc.Close()
 
 				fileContents := make([]byte, file.UncompressedSize64)
 				if _, err := io.ReadFull(rc, fileContents); err != nil {
-					errChan <- fmt.Errorf("failed to read zip file entry %s: %w", file.Name, err)
+					setFirstError(fmt.Errorf("failed to read zip file entry %s: %w", file.Name, err))
 					return
 				}
 
 				if err := os.WriteFile(targetPath, fileContents, file.Mode()); err != nil {
-					errChan <- fmt.Errorf("failed to write file %s: %w", targetPath, err)
+					setFirstError(fmt.Errorf("failed to write file %s: %w", targetPath, err))
 					return
 				}
 
@@ -549,10 +561,6 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 
 cleanup:
 	wg.Wait()
-	close(errChan)
-	for err := range errChan {
-		setFirstError(err)
-	}
 
 	if progressCb != nil {
 		progressCb(1.0)
