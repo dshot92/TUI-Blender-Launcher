@@ -18,7 +18,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	// Check that the download dir is set to a reasonable default
 	homeDir, _ := os.UserHomeDir()
-	expectedPath := filepath.Join(homeDir, "blender/blender-build")
+	expectedPath := filepath.Join(homeDir, "blender/blender-builds")
 
 	if cfg.DownloadDir != expectedPath {
 		t.Errorf("Expected download dir %s, got %s", expectedPath, cfg.DownloadDir)
@@ -102,7 +102,7 @@ func TestLoadConfig(t *testing.T) {
 			checkConfig: func(t *testing.T, cfg Config) {
 				// Should return default config
 				homeDir, _ := os.UserHomeDir()
-				expectedPath := filepath.Join(homeDir, "blender/blender-build")
+				expectedPath := filepath.Join(homeDir, "blender/blender-builds")
 				if cfg.DownloadDir != expectedPath {
 					t.Errorf("Expected download dir %s, got %s", expectedPath, cfg.DownloadDir)
 				}
