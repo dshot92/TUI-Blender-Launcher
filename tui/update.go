@@ -282,6 +282,21 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTickMsg(msg)
 
 	case tea.MouseMsg:
+		// A pending delete/cancel confirmation captures the mouse; clicking a
+		// button resolves it and other clicks are swallowed.
+		if m.deleteConfirm {
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				switch m.deleteConfirmButtonAt(msg.X, msg.Y) {
+				case confirmChoiceYes:
+					m.deleteConfirm = false
+					return m.doDeleteBuild()
+				case confirmChoiceNo:
+					m.deleteConfirm = false
+				}
+			}
+			return m, nil
+		}
+
 		// Close the context menu on any click outside of it.
 		if m.contextMenuVisible && msg.Action == tea.MouseActionPress {
 			// If the click lands inside the menu, act on the chosen entry.
@@ -391,14 +406,15 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.deleteConfirm = false
 				return m, nil
 			case tea.KeyLeft:
-				m.deleteConfirmChoice = 0
+				m.deleteConfirmChoice = confirmChoiceNo
 				return m, nil
 			case tea.KeyRight:
-				m.deleteConfirmChoice = 1
+				m.deleteConfirmChoice = confirmChoiceYes
 				return m, nil
 			case tea.KeyEnter:
+				confirm := m.deleteConfirmChoice == confirmChoiceYes
 				m.deleteConfirm = false
-				if m.deleteConfirmChoice == 0 {
+				if confirm {
 					return m.doDeleteBuild()
 				}
 				return m, nil
@@ -406,10 +422,10 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Type == tea.KeyRunes {
 				switch string(msg.Runes) {
 				case "h":
-					m.deleteConfirmChoice = 0
+					m.deleteConfirmChoice = confirmChoiceNo
 					return m, nil
 				case "l":
-					m.deleteConfirmChoice = 1
+					m.deleteConfirmChoice = confirmChoiceYes
 					return m, nil
 				case "x", "X", "y", "Y":
 					m.deleteConfirm = false
@@ -466,7 +482,7 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.deleteConfirm = true
 					m.deleteConfirmBuild = *build
 					m.deleteConfirmCancel = downloading
-					m.deleteConfirmChoice = 0
+					m.deleteConfirmChoice = confirmChoiceNo
 					return m, nil
 				case CmdCleanOldBuilds:
 					return m, func() tea.Msg {

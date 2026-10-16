@@ -87,6 +87,13 @@ const (
 // be recognised as inert instead of running CmdQuit (the zero value).
 const CmdNone CommandType = -1
 
+// Delete/cancel confirmation choices. "No" is the default so that an accidental
+// Enter never destroys anything.
+const (
+	confirmChoiceNo  = 0
+	confirmChoiceYes = 1
+)
+
 // KeyCommand defines a keyboard command with its key binding and description
 type KeyCommand struct {
 	Type        CommandType

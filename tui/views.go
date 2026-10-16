@@ -222,23 +222,26 @@ func (m *Model) overlayCompletionDropdown(frame string, boxX, boxY, boxWidth, bo
 	return overlayBlock(frame, dropdown, anchorX, anchorY, m.terminalWidth)
 }
 
-// renderDeleteConfirmOverlay renders a centered confirmation popup as an overlay
-// on top of the build list, leaving the surrounding content visible.
-func (m *Model) renderDeleteConfirmOverlay() string {
-	p := m.Style.Palette
-	title := " Confirm "
+// deleteConfirmLayout describes the on-screen geometry of the confirm modal so
+// rendering and mouse hit-testing agree on the button positions.
+type deleteConfirmLayout struct {
+	boxX, boxY int
+	boxW, boxH int
+	innerW     int
+	buttonY    int
+	noX, yesX  int
+}
 
-	text := "Delete build " + m.deleteConfirmBuild.Version + "?"
-	if m.deleteConfirmCancel {
-		text = "Cancel download of " + m.deleteConfirmBuild.Version + "?"
-	}
+// confirmNoLabel and confirmYesLabel are the button labels. Yes sits to the
+// right of No, and No is the default choice.
+const (
+	confirmNoLabel  = "[ No ]"
+	confirmYesLabel = "[ Yes ]"
+)
 
-	m.computeLayout()
-	header := renderHeader(m)
-	body := m.renderBody()
-	footer := m.renderBuildFooter()
-	base := strings.Join([]string{header, body, footer}, "\n")
-
+// deleteConfirmLayout computes the confirm modal geometry for the current
+// terminal size.
+func (m *Model) deleteConfirmLayout() deleteConfirmLayout {
 	boxWidth := m.layout.settingsWidth
 	if boxWidth < settingsMinWidth {
 		boxWidth = settingsMinWidth
@@ -255,35 +258,18 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 		innerW = 1
 	}
 
-	content := m.Style.HelpDesc.Render(text)
-	content = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(content, innerW))
-
-	// Two selectable choices, navigable with left/right (or h/l).
-	yesStyle := m.Style.Muted
-	noStyle := m.Style.Muted
-	if m.deleteConfirmChoice == 0 {
-		yesStyle = m.Style.ActivePaneTitle
-	} else {
-		noStyle = m.Style.ActivePaneTitle
+	buttons := confirmNoLabel + "   " + confirmYesLabel
+	btnsW := width(buttons)
+	if btnsW > innerW {
+		btnsW = innerW
 	}
-	yesBtn := yesStyle.Render("[ Yes ]")
-	noBtn := noStyle.Render("[ No ]")
-	buttons := yesBtn + "   " + noBtn
-	buttons = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(buttons, innerW))
+	pad := (innerW - btnsW) / 2
+	if pad < 0 {
+		pad = 0
+	}
 
-	help := m.renderHints([]hint{
-		{key: "←/→", label: "choose"},
-		{key: "enter", label: "confirm"},
-		{key: "esc", label: "cancel"},
-	})
-	help = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(help, innerW))
-
-	lines := make([]string, 0, 8)
-	lines = append(lines, "")
-	lines = append(lines, content)
-	lines = append(lines, "", buttons, "", help)
-
-	boxHeight := len(lines) + boxBorderFrameHeight
+	// Box lines: blank, content, blank, buttons, blank, help.
+	boxHeight := 6 + boxBorderFrameHeight
 	if boxHeight > m.terminalHeight {
 		boxHeight = m.terminalHeight
 	}
@@ -291,23 +277,98 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 		boxHeight = minH
 	}
 
+	boxX := (m.terminalWidth - boxWidth) / 2
+	if boxX < 0 {
+		boxX = 0
+	}
+	boxY := (m.terminalHeight - boxHeight) / 2
+	if boxY < 0 {
+		boxY = 0
+	}
+
+	startX := boxX + 1 + pad
+	return deleteConfirmLayout{
+		boxX: boxX, boxY: boxY,
+		boxW: boxWidth, boxH: boxHeight,
+		innerW:  innerW,
+		buttonY: boxY + 4,
+		noX:     startX,
+		yesX:    startX + width(confirmNoLabel) + 3,
+	}
+}
+
+// deleteConfirmButtonAt returns the choice under (x, y), or -1 when the click
+// does not land on a button.
+func (m *Model) deleteConfirmButtonAt(x, y int) int {
+	lay := m.deleteConfirmLayout()
+	if y != lay.buttonY {
+		return -1
+	}
+	if x >= lay.noX && x < lay.noX+width(confirmNoLabel) {
+		return confirmChoiceNo
+	}
+	if x >= lay.yesX && x < lay.yesX+width(confirmYesLabel) {
+		return confirmChoiceYes
+	}
+	return -1
+}
+
+// renderDeleteConfirmOverlay renders a centered confirmation popup as an overlay
+// on top of the build list, leaving the surrounding content visible.
+func (m *Model) renderDeleteConfirmOverlay() string {
+	p := m.Style.Palette
+	title := " Confirm "
+
+	text := "Delete build " + m.deleteConfirmBuild.Version + "?"
+	if m.deleteConfirmCancel {
+		text = "Cancel download of " + m.deleteConfirmBuild.Version + "?"
+	}
+
+	m.computeLayout()
+	lay := m.deleteConfirmLayout()
+
+	header := renderHeader(m)
+	body := m.renderBody()
+	footer := m.renderBuildFooter()
+	base := strings.Join([]string{header, body, footer}, "\n")
+
+	content := m.Style.HelpDesc.Render(text)
+	content = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(content, lay.innerW))
+
+	// Two selectable choices, navigable with left/right (or h/l). No is on the
+	// left and is selected by default, so Yes must be chosen deliberately.
+	yesStyle := m.Style.Muted
+	noStyle := m.Style.Muted
+	if m.deleteConfirmChoice == confirmChoiceYes {
+		yesStyle = m.Style.ActivePaneTitle
+	} else {
+		noStyle = m.Style.ActivePaneTitle
+	}
+	noBtn := noStyle.Render(confirmNoLabel)
+	yesBtn := yesStyle.Render(confirmYesLabel)
+	buttons := noBtn + "   " + yesBtn
+	buttons = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(buttons, lay.innerW))
+
+	help := m.renderHints([]hint{
+		{key: "←/→", label: "choose"},
+		{key: "enter", label: "confirm"},
+		{key: "esc", label: "cancel"},
+	})
+	help = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(help, lay.innerW))
+
+	lines := make([]string, 0, 8)
+	lines = append(lines, "")
+	lines = append(lines, content)
+	lines = append(lines, "", buttons, "", help)
+
 	box := renderBox("",
 		m.Style.ActivePaneTitle.Render(title),
 		strings.Join(lines, "\n"),
-		boxWidth,
-		boxHeight,
+		lay.boxW,
+		lay.boxH,
 		lp.Color(p.Accent),
 	)
-
-	x := (m.terminalWidth - boxWidth) / 2
-	y := (m.terminalHeight - boxHeight) / 2
-	if x < 0 {
-		x = 0
-	}
-	if y < 0 {
-		y = 0
-	}
-	return overlayBlock(base, box, x, y, m.terminalWidth)
+	return overlayBlock(base, box, lay.boxX, lay.boxY, m.terminalWidth)
 }
 
 // renderContextMenuOverlay renders a small popup listing the available actions

@@ -449,7 +449,7 @@ func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 		m.deleteConfirm = true
 		m.deleteConfirmBuild = *build
 		m.deleteConfirmCancel = downloading
-		m.deleteConfirmChoice = 0
+		m.deleteConfirmChoice = confirmChoiceNo
 		return m, nil
 	default:
 		return m, nil
@@ -653,7 +653,7 @@ func (m *Model) executeContextMenuItem() (tea.Model, tea.Cmd) {
 			m.deleteConfirmBuild = *build
 			m.deleteConfirm = true
 			m.deleteConfirmCancel = m.isDownloading(*build)
-			m.deleteConfirmChoice = 0
+			m.deleteConfirmChoice = confirmChoiceNo
 		}
 		return m, nil
 	case CmdOpenURL:

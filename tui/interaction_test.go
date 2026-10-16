@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dshot92/TUI-Blender-Launcher/model"
@@ -324,4 +325,99 @@ func hintX(hints []hint, lineStart int, target CommandType) int {
 		}
 	}
 	return -1
+}
+
+// openDeleteConfirm returns a model with the delete confirmation open on a local
+// build.
+func openDeleteConfirm(t *testing.T) *Model {
+	t.Helper()
+	m := sampleModel()
+	m.UpdateWindowSize(150, 40)
+
+	localIdx := -1
+	for i, b := range m.List.Builds {
+		if b.Status == model.StateLocal {
+			localIdx = i
+			break
+		}
+	}
+	if localIdx < 0 {
+		t.Fatalf("sample model has no local build")
+	}
+	m.List.Cursor = localIdx
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if !m.deleteConfirm {
+		t.Fatalf("pressing x on a local build should open the confirmation")
+	}
+	return m
+}
+
+func TestDeleteConfirmDefaultsToNo(t *testing.T) {
+	m := openDeleteConfirm(t)
+	if m.deleteConfirmChoice != confirmChoiceNo {
+		t.Fatalf("confirmation default choice = %d, want No (%d)", m.deleteConfirmChoice, confirmChoiceNo)
+	}
+
+	// Enter with the default must not delete anything.
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		t.Fatalf("enter on the default (No) should not produce a delete command")
+	}
+	if m.deleteConfirm {
+		t.Fatalf("enter should dismiss the confirmation")
+	}
+}
+
+func TestDeleteConfirmButtonsOrderedNoThenYes(t *testing.T) {
+	m := openDeleteConfirm(t)
+	lay := m.deleteConfirmLayout()
+	if lay.noX >= lay.yesX {
+		t.Fatalf("expected No left of Yes, got noX=%d yesX=%d", lay.noX, lay.yesX)
+	}
+	out := plain(m.View())
+	if i, j := strings.Index(out, confirmNoLabel), strings.Index(out, confirmYesLabel); i < 0 || j < 0 || i > j {
+		t.Fatalf("expected [ No ] before [ Yes ] in the overlay:\n%s", out)
+	}
+}
+
+func TestDeleteConfirmMouseNoCancels(t *testing.T) {
+	m := openDeleteConfirm(t)
+	lay := m.deleteConfirmLayout()
+	_, cmd := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		X: lay.noX + 1, Y: lay.buttonY,
+	})
+	if cmd != nil {
+		t.Fatalf("clicking No should not delete")
+	}
+	if m.deleteConfirm {
+		t.Fatalf("clicking No should dismiss the confirmation")
+	}
+}
+
+func TestDeleteConfirmMouseYesDeletes(t *testing.T) {
+	m := openDeleteConfirm(t)
+	lay := m.deleteConfirmLayout()
+	_, cmd := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		X: lay.yesX + 1, Y: lay.buttonY,
+	})
+	if cmd == nil {
+		t.Fatalf("clicking Yes should produce a delete command")
+	}
+	if m.deleteConfirm {
+		t.Fatalf("clicking Yes should dismiss the confirmation")
+	}
+}
+
+func TestDeleteConfirmMouseIgnoresBackground(t *testing.T) {
+	m := openDeleteConfirm(t)
+	// A click well away from the buttons leaves the confirmation open.
+	_, cmd := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+		X: 1, Y: 1,
+	})
+	if cmd != nil || !m.deleteConfirm {
+		t.Fatalf("background click should be ignored (cmd=%v, open=%v)", cmd, m.deleteConfirm)
+	}
 }

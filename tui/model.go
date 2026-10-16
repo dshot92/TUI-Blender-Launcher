@@ -59,7 +59,7 @@ type Model struct {
 	deleteConfirm       bool
 	deleteConfirmBuild  model.BlenderBuild
 	deleteConfirmCancel bool
-	deleteConfirmChoice int // 0 = confirm (yes), 1 = abort (no)
+	deleteConfirmChoice int // confirmChoiceNo or confirmChoiceYes; No is the default
 
 	// Layout, recomputed whenever the terminal or view changes.
 	layout layoutInfo
