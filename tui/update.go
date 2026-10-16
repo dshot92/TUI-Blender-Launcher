@@ -5,7 +5,6 @@ import (
 	"TUI-Blender-Launcher/model"
 	"fmt"
 
-	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -49,12 +48,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = msg.text
 		m.err = nil
 		return m, nil
-
-	case progress.FrameMsg:
-		// Pass to progress model
-		newProgress, cmd := m.Progress.Update(msg)
-		m.Progress = *newProgress.(*ProgressModel)
-		return m, cmd
 	}
 
 	// Route based on view

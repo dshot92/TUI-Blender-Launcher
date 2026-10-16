@@ -235,8 +235,8 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 	var output strings.Builder
 	newlineStyle := lp.NewStyle().Render("\n")
 
-	// Get column configuration with computed widths
-	columns := GetBuildColumns(m.terminalWidth)
+	// Get column configuration (cached)
+	columns := m.columnsLayout()
 
 	// Calculate visible range
 	endIndex := m.List.StartIndex + visibleRowsCount
@@ -315,8 +315,8 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 		)
 	}
 
-	// Get column configuration with computed widths
-	columns := GetBuildColumns(m.terminalWidth)
+	// Get column configuration (cached)
+	columns := m.columnsLayout()
 
 	// Build table header row first (without styling yet)
 	var headerCells []string

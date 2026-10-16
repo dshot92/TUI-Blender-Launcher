@@ -24,6 +24,10 @@ type Model struct {
 	Progress ProgressModel
 
 	Style Style
+
+	// Cached column layout, rebuilt only when the terminal width changes.
+	columns      []ColumnConfig
+	columnsWidth int
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -89,11 +93,20 @@ func (m *Model) SaveSettings() error {
 }
 
 func (m *Model) View() string {
-	// Sync download states before rendering
-	m.SyncDownloadStates()
-
 	// Render the page using the custom render function.
+	// Note: download states are synced on tick (handleTickMsg), not here, so
+	// rendering stays side-effect free.
 	return m.renderPageForView()
+}
+
+// columnsLayout returns the cached table columns, rebuilding them only when
+// the terminal width changes. Avoids rebuilding lipgloss styles every render.
+func (m *Model) columnsLayout() []ColumnConfig {
+	if m.columns == nil || m.columnsWidth != m.terminalWidth {
+		m.columns = GetBuildColumns(m.terminalWidth)
+		m.columnsWidth = m.terminalWidth
+	}
+	return m.columns
 }
 
 // Proxy methods for compatibility/convenience if needed,

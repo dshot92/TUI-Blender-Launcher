@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -178,80 +179,80 @@ func FormatBuildDate(t Timestamp) string {
 	return t.Time().Format("2006-01-02-15:04")
 }
 
-// SortBuilds sorts the builds based on the selected column and sort order
+// compareByColumn compares two builds on the given column, returning -1, 0 or 1.
+func compareByColumn(a, b BlenderBuild, column int) int {
+	switch column {
+	case 0: // Version
+		return strings.Compare(a.Version, b.Version)
+	case 1: // Status
+		switch {
+		case a.Status < b.Status:
+			return -1
+		case a.Status > b.Status:
+			return 1
+		default:
+			return 0
+		}
+	case 2: // Branch
+		return strings.Compare(a.Branch, b.Branch)
+	case 3: // Type/ReleaseCycle
+		return strings.Compare(a.ReleaseCycle, b.ReleaseCycle)
+	case 4: // Hash
+		return strings.Compare(a.Hash, b.Hash)
+	case 5: // Size
+		switch {
+		case a.Size < b.Size:
+			return -1
+		case a.Size > b.Size:
+			return 1
+		default:
+			return 0
+		}
+	case 6: // Build Date
+		switch {
+		case a.BuildDate.Time().Before(b.BuildDate.Time()):
+			return -1
+		case a.BuildDate.Time().After(b.BuildDate.Time()):
+			return 1
+		default:
+			return 0
+		}
+	default:
+		return 0
+	}
+}
+
+// SortBuilds sorts the builds based on the selected column and sort order.
 func SortBuilds(builds []BlenderBuild, column int, reverse bool) []BlenderBuild {
 	// Create a copy of builds to avoid modifying the original
 	sortedBuilds := make([]BlenderBuild, len(builds))
 	copy(sortedBuilds, builds)
 
-	// Define sort function type for better organization
-	type sortFunc func(a, b BlenderBuild) bool
-
-	// Define the sort functions for each column based on the column index
-	sortFuncs := map[int]sortFunc{
-		0: func(a, b BlenderBuild) bool { // Version
-			return a.Version < b.Version
-		},
-		1: func(a, b BlenderBuild) bool { // Status
-			return a.Status < b.Status
-		},
-		2: func(a, b BlenderBuild) bool { // Branch
-			return a.Branch < b.Branch
-		},
-		3: func(a, b BlenderBuild) bool { // Type/ReleaseCycle
-			return a.ReleaseCycle < b.ReleaseCycle
-		},
-		4: func(a, b BlenderBuild) bool { // Hash
-			return a.Hash < b.Hash
-		},
-		5: func(a, b BlenderBuild) bool { // Size
-			return a.Size < b.Size
-		},
-		6: func(a, b BlenderBuild) bool { // Build Date
-			return a.BuildDate.Time().Before(b.BuildDate.Time())
-		},
-	}
-
-	// Order of columns to compare for stability (use all columns as secondary sort criteria)
+	// Order of columns to compare as tiebreakers (all columns, ascending).
 	allColumns := []int{0, 1, 2, 3, 4, 5, 6}
 
-	// Sort using the primary column and then all other columns as tiebreakers
 	sort.SliceStable(sortedBuilds, func(i, j int) bool {
 		a, b := sortedBuilds[i], sortedBuilds[j]
 
-		// First compare using the primary column
-		primaryFunc := sortFuncs[column]
-		aLessB := primaryFunc(a, b)
-		bLessA := primaryFunc(b, a)
-
-		// If values are different, use the primary comparison result
-		if aLessB != bLessA {
+		// First compare using the primary column.
+		if c := compareByColumn(a, b, column); c != 0 {
 			if reverse {
-				return !aLessB
+				return c > 0
 			}
-			return aLessB
+			return c < 0
 		}
 
-		// Values are equal, use secondary columns as tiebreakers
+		// Values are equal: use the other columns as ascending tiebreakers.
 		for _, secondaryCol := range allColumns {
-			// Skip the primary column as we've already compared it
 			if secondaryCol == column {
 				continue
 			}
-
-			secondaryFunc := sortFuncs[secondaryCol]
-			aLessB = secondaryFunc(a, b)
-			bLessA = secondaryFunc(b, a)
-
-			// If secondary values differ, use this as the tiebreaker
-			if aLessB != bLessA {
-				// Always use ascending order for tiebreakers regardless of reverse flag
-				// This ensures a stable sort that doesn't "flash"
-				return aLessB
+			if c := compareByColumn(a, b, secondaryCol); c != 0 {
+				return c < 0
 			}
 		}
 
-		// If all values are equal, maintain original order for stability
+		// All values equal: maintain original order for stability.
 		return i < j
 	})
 
