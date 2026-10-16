@@ -74,6 +74,18 @@ func TestViewLinesFitTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestFrameHeightFitsTerminal(t *testing.T) {
+	sizes := [][2]int{{150, 40}, {120, 30}, {80, 24}, {45, 12}}
+	for _, sz := range sizes {
+		m := sampleModel()
+		m.UpdateWindowSize(sz[0], sz[1])
+		lines := strings.Split(plain(m.View()), "\n")
+		if len(lines) != sz[1] {
+			t.Fatalf("%dx%d: frame has %d lines, want %d", sz[0], sz[1], len(lines), sz[1])
+		}
+	}
+}
+
 func TestViewLinesFitTerminalWidthSettings(t *testing.T) {
 	sizes := [][2]int{{150, 40}, {120, 30}, {80, 24}, {45, 12}}
 	for _, sz := range sizes {

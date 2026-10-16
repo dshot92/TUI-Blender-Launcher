@@ -11,7 +11,7 @@ const (
 	minTermHeight = 12
 
 	// Fixed vertical chrome heights (in lines).
-	headerBoxHeight = 3 // rounded box containing the logo/meta
+	headerBoxHeight = 1 // single line with the logo/meta
 	footerHeight    = 2 // two lines of key hints
 
 	// Border frame sizes for a rounded box.

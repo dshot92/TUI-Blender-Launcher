@@ -8,15 +8,11 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// renderHeader renders the top chrome: a rounded box holding the gradient
-// wordmark on the left and live status metadata on the right. It always
-// occupies exactly headerBoxHeight lines.
+// renderHeader renders the single-line top chrome: the gradient wordmark on the
+// left and live status metadata on the right, padded to the terminal width. It
+// always occupies exactly headerBoxHeight lines.
 func renderHeader(m *Model) string {
 	p := m.Style.Palette
-	innerWidth := m.terminalWidth - boxBorderFrameWidth
-	if innerWidth < 1 {
-		innerWidth = 1
-	}
 
 	mark := gradientText("◈ Blender", p.GradientStart, p.GradientEnd)
 	left := mark + m.Style.Muted.Render(" Launcher")
@@ -29,7 +25,7 @@ func renderHeader(m *Model) string {
 	}
 
 	meta := ""
-	if innerWidth >= 46 {
+	if m.terminalWidth >= 46 {
 		parts := []string{fmt.Sprintf("%d builds", len(m.List.Builds))}
 		if active > 0 {
 			parts = append(parts, fmt.Sprintf("%d active", active))
@@ -40,10 +36,13 @@ func renderHeader(m *Model) string {
 
 	content := left
 	if meta != "" {
-		if gap := innerWidth - width(left) - width(meta); gap >= 1 {
+		if gap := m.terminalWidth - width(left) - width(meta); gap >= 1 {
 			content = left + strings.Repeat(" ", gap) + meta
 		}
 	}
 
-	return renderBox("", "", content, m.terminalWidth, headerBoxHeight, lp.Color(p.Border))
+	// Keep the line exactly terminalWidth columns wide: truncate first so long
+	// content can't wrap, then pad the remainder.
+	content = truncate(content, m.terminalWidth)
+	return lp.NewStyle().Width(m.terminalWidth).Render(content)
 }

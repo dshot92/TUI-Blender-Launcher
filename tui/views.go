@@ -7,7 +7,7 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// renderPageForView assembles the full frame: header box, the body (builds +
+// renderPageForView assembles the full frame: the single-line header, the body (builds +
 // optional detail pane, or the settings modal), and the footer. Any transient
 // status/error message is layered over the bottom of the frame as a toast.
 func (m *Model) renderPageForView() string {
