@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"TUI-Blender-Launcher/config"
+	"TUI-Blender-Launcher/model"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -81,7 +82,7 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 	m := SettingsModel{
 		Config:           cfg,
 		Style:            style,
-		BuildTypeOptions: []string{"daily", "experimental", "patch"},
+		BuildTypeOptions: model.BuildTypeNames(),
 		BuildType:        cfg.BuildType,
 		ThemeOptions:     PaletteNames(),
 		FocusIndex:       settingDownloadDir,

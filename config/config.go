@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"TUI-Blender-Launcher/model"
+
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
 )
@@ -17,7 +19,7 @@ const AppName = "tui-blender-launcher" // Use lowercase app name
 type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
-	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
+	BuildType     string `toml:"build_type"`     // one of model.BuildTypes: "daily", "experimental", "patch"
 	Theme         string `toml:"theme"`          // UI palette name (dracula, catppuccin, nord, gruvbox, tokyonight)
 	UUID          string `toml:"uuid"`           // Unique identifier for this instance
 }
@@ -108,6 +110,11 @@ func LoadConfig() (Config, error) {
 	// Ensure a palette is always selected.
 	if cfg.Theme == "" {
 		cfg.Theme = "dracula"
+	}
+
+	// Normalize the build type so an unknown value never reaches the API or UI.
+	if bt := model.ParseBuildType(cfg.BuildType); string(bt) != cfg.BuildType {
+		cfg.BuildType = string(bt)
 	}
 
 	return cfg, nil

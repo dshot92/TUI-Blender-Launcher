@@ -7,9 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"strings"
-
-	version "github.com/hashicorp/go-version" // Import version library
 )
 
 // API endpoint URLs for different build types
@@ -18,6 +15,14 @@ const (
 	patchBlenderAPIURL        = "https://builder.blender.org/download/patch/?format=json&v=1"
 	experimentalBlenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
 )
+
+// buildTypeURLs maps each supported build type to its API endpoint. It is keyed
+// by model.BuildType so the set of build types has a single source of truth.
+var buildTypeURLs = map[model.BuildType]string{
+	model.BuildTypeDaily:        dailyBlenderAPIURL,
+	model.BuildTypePatch:        patchBlenderAPIURL,
+	model.BuildTypeExperimental: experimentalBlenderAPIURL,
+}
 
 // API represents the Blender API client
 type API struct {
@@ -46,17 +51,10 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Determine which API URL to use based on buildType
-	var apiURL string
-	switch buildType {
-	case "daily":
-		apiURL = dailyBlenderAPIURL
-	case "patch":
-		apiURL = patchBlenderAPIURL
-	case "experimental":
-		apiURL = experimentalBlenderAPIURL
-	default:
-		// Default to daily builds if not specified or invalid
+	// Determine which API URL to use based on buildType, defaulting to daily
+	// builds if the value is unknown.
+	apiURL, ok := buildTypeURLs[model.ParseBuildType(buildType)]
+	if !ok {
 		apiURL = dailyBlenderAPIURL
 	}
 
@@ -92,98 +90,26 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 	// --- Filtering Setup ---
 	currentOS := runtime.GOOS
 	currentArch := runtime.GOARCH
-	// Initialize apiArch explicitly within the switch block below
-	var apiArch string
+	allowed := allowedArch(currentOS, currentArch)
 
-	// Map architecture names from Go runtime format (GOARCH) to Blender API format.
-	// GOOS values (linux, windows, darwin) match the API 'platform' field directly.
-	switch currentOS {
-	case "linux":
-		switch currentArch {
-		case "amd64":
-			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
-		case "arm64":
-			// Assuming API uses "arm64" for Linux ARM (like other OS).
-			// Verified data did not contain Linux ARM builds from this endpoint.
-			// Adjust if other endpoints use "aarch64" or similar for Linux ARM.
-			apiArch = "arm64"
-		default:
-			// For unknown/unsupported arch, use Go's name; will likely be filtered out later.
-			apiArch = currentArch
-		}
-	case "darwin": // macOS
-		switch currentArch {
-		case "amd64":
-			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
-		case "arm64":
-			apiArch = "arm64" // Go's arm64 matches API's arm64
-		default:
-			apiArch = currentArch
-		}
-	case "windows":
-		switch currentArch {
-		case "amd64":
-			apiArch = "amd64" // Go's amd64 matches API's amd64
-		case "arm64":
-			apiArch = "arm64" // Go's arm64 matches API's arm64
-		default:
-			apiArch = currentArch
-		}
-	default:
-		// For unknown OS, use Go's arch name; OS filter check later will handle it.
-		apiArch = currentArch
-	}
-
-	// Accept the mapped architecture plus any known aliases. Blender labels
-	// Linux ARM builds "aarch64", while Go reports "arm64".
-	allowedArch := map[string]bool{apiArch: true}
-	if currentOS == "linux" && currentArch == "arm64" {
-		allowedArch["aarch64"] = true
-	}
-
-	allowedExtensions := map[string]bool{
-		"zip": true, "tar.gz": true, "tar.xz": true, "tar.bz2": true,
-		"xz": true, "dmg": true, "pkg": true,
-	}
-
-	// Parse the version filter if provided
-	var minVersion *version.Version
-	if versionFilter != "" {
-		minVersion, err = version.NewVersion(versionFilter)
-		if err != nil {
-			// Handle invalid filter format - maybe log and ignore?
-			// For now, return error to notify user via TUI
-			return nil, fmt.Errorf("invalid version filter format '%s': %w", versionFilter, err)
-		}
+	// Parse the version filter once. An invalid filter is a user error, so it is
+	// surfaced to the caller (which shows it in the TUI).
+	vf, err := model.ParseVersionFilter(versionFilter)
+	if err != nil {
+		return nil, fmt.Errorf("invalid version filter format '%s': %w", versionFilter, err)
 	}
 
 	// --- Filtering Loop ---
 	var platformFilteredBuilds []model.BlenderBuild
 	for _, build := range allBuildEntries {
-		// Check OS
-		if build.OperatingSystem != currentOS {
+		if !matchesPlatform(build, currentOS, allowed) {
 			continue
 		}
-		// Check Arch against the mapped value and any accepted aliases.
-		if !allowedArch[build.Architecture] {
+		if !hasAllowedExtension(build.FileExtension) {
 			continue
 		}
-		// Check Extension
-		ext := strings.ToLower(build.FileExtension)
-		if _, ok := allowedExtensions[ext]; !ok {
+		if !vf.Matches(build, false) {
 			continue
-		}
-
-		// Check Version Filter
-		if minVersion != nil {
-			buildVersion, err := version.NewVersion(build.Version)
-			if err != nil {
-				// Skip builds with unparseable versions if filter is active
-				continue
-			}
-			if buildVersion.LessThan(minVersion) {
-				continue // Skip if build version is less than filter
-			}
 		}
 
 		// Passed all filters

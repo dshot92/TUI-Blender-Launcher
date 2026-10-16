@@ -10,7 +10,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	gv "github.com/hashicorp/go-version"
 )
 
 // Helper to check key matches
@@ -258,37 +257,16 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	return m, m.commands.UpdateBuildStatus(m.List.Builds)
 }
 
-// applyVersionFilter filters builds by version using semantic version
-// comparison (so e.g. "4.10" is correctly treated as newer than "4.9").
+// applyVersionFilter filters builds by version using the shared semantic
+// version filter (so e.g. "4.10" is correctly treated as newer than "4.9").
+// Local and in-progress builds are always kept. An empty or invalid filter is a
+// no-op so a bad value never hides every build.
 func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderBuild {
-	if m.config.VersionFilter == "" {
-		return builds
-	}
-
-	minVersion, err := gv.NewVersion(m.config.VersionFilter)
+	vf, err := model.ParseVersionFilter(m.config.VersionFilter)
 	if err != nil {
-		// Invalid filter: don't filter anything rather than hide all builds.
 		return builds
 	}
-
-	filtered := make([]model.BlenderBuild, 0)
-	for _, build := range builds {
-		// Always keep local builds regardless of version filter
-		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			filtered = append(filtered, build)
-			continue
-		}
-
-		// Compare versions
-		buildVersion, err := gv.NewVersion(build.Version)
-		if err != nil {
-			continue
-		}
-		if !buildVersion.LessThan(minVersion) {
-			filtered = append(filtered, build)
-		}
-	}
-	return filtered
+	return vf.Apply(builds)
 }
 
 // handleBuildsUpdated finalizes the build list after determining local/online status
