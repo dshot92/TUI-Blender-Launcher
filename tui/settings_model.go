@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"path/filepath"
 	"strings"
 
 	"TUI-Blender-Launcher/config"
@@ -300,42 +298,7 @@ func (m SettingsModel) renderDetail(w int) string {
 	for _, dl := range wrapText(settingDescription(idx), contentW) {
 		lines = append(lines, descStyle.Padding(0, 1).Render(dl))
 	}
-
-	// While completing the download directory, list the candidate folders the
-	// current Tab session found so ambiguous matches are visible.
-	if idx == settingDownloadDir && m.EditMode {
-		lines = append(lines, m.renderDirMatches(contentW, labelStyle, valueStyle)...)
-	}
 	return strings.Join(lines, "\n")
-}
-
-// renderDirMatches renders the Tab-completion candidates as a short list,
-// highlighting the one currently shown. It returns nil when there is nothing
-// useful to show (fewer than two candidates).
-func (m SettingsModel) renderDirMatches(w int, labelStyle, valueStyle lp.Style) []string {
-	if len(m.dirMatches) < 2 {
-		return nil
-	}
-
-	p := m.Style.Palette
-	current := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
-	muted := lp.NewStyle().Foreground(lp.Color(p.Muted))
-
-	out := []string{"", " " + labelStyle.Render("Matches")}
-	for i, match := range m.dirMatches {
-		if i >= settingsMaxDirMatches {
-			out = append(out, " "+muted.Render(fmt.Sprintf("… +%d more", len(m.dirMatches)-i)))
-			break
-		}
-		marker := "  "
-		style := valueStyle
-		if i == m.dirMatchIdx {
-			marker = "▸ "
-			style = current
-		}
-		out = append(out, " "+style.Render(truncate(marker+filepath.Base(match), w)))
-	}
-	return out
 }
 
 // detailValue renders the "Value: ..." line for the focused setting.

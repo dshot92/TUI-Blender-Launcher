@@ -12,7 +12,7 @@ import (
 )
 
 // newDirSettings builds a SettingsModel focused on the Download Directory row,
-// sized so the detail pane (and its completion list) is rendered.
+// sized so the detail pane (and its completion popup) is rendered.
 func newDirSettings(t *testing.T, dir string) *SettingsModel {
 	t.Helper()
 	cfg := config.Config{DownloadDir: dir, BuildType: "daily", Theme: "dracula"}
@@ -90,22 +90,14 @@ func TestSettingsTabCyclesAmbiguousMatches(t *testing.T) {
 	apple := filepath.Join(root, "fruits", "apple") + sep
 	apricot := filepath.Join(root, "fruits", "apricot") + sep
 
-	// First Tab can only pick a candidate; the following ones cycle.
 	for i, want := range []string{apple, apricot, apple} {
 		s.Update(tea.KeyMsg{Type: tea.KeyTab})
 		if got := s.Inputs[settingDownloadDir].Value(); got != want {
 			t.Fatalf("Tab %d: value = %q, want %q", i+1, got, want)
 		}
 	}
-
-	out := plain(s.View())
-	if !strings.Contains(out, "Matches") {
-		t.Fatalf("detail pane should list matches:\n%s", out)
-	}
-	for _, name := range []string{"apple", "apricot"} {
-		if !strings.Contains(out, name) {
-			t.Fatalf("detail pane should list %q:\n%s", name, out)
-		}
+	if len(s.dirMatches) != 2 {
+		t.Fatalf("matches = %v, want 2", s.dirMatches)
 	}
 }
 
@@ -124,13 +116,9 @@ func TestSettingsTabSessionResetsOnTyping(t *testing.T) {
 		t.Fatal("expected matches after Tab")
 	}
 
-	// Typing a character abandons the completion session.
 	s.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if len(s.dirMatches) != 0 {
 		t.Fatalf("typing should clear matches, got %v", s.dirMatches)
-	}
-	if out := plain(s.View()); strings.Contains(out, "Matches") {
-		t.Fatalf("match list should disappear after typing:\n%s", out)
 	}
 }
 
@@ -153,7 +141,39 @@ func TestSettingsTabSessionResetsOnCommit(t *testing.T) {
 	if len(s.dirMatches) != 0 {
 		t.Fatalf("commit should clear matches, got %v", s.dirMatches)
 	}
-	if out := plain(s.View()); strings.Contains(out, "Matches") {
-		t.Fatalf("match list should disappear after commit:\n%s", out)
+}
+
+// TestCompletionDropdownRendersInFrame checks that the floating completion
+// candidates actually appear in the rendered settings frame via the IDE-style
+// overlay, anchored near the Download Directory input.
+func TestCompletionDropdownRendersInFrame(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"fruits/apple", "fruits/apricot"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+
+	m.Settings.SetValues(SettingsValues{DownloadDir: filepath.Join(root, "fruits", "ap"), BuildType: "daily", Theme: "dracula"})
+	m.UpdateWindowSize(120, 34)
+
+	m.Settings.FocusIndex = settingDownloadDir
+	m.Settings.EditMode = true
+	m.Settings.updateFocusStyles()
+	m.Settings.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	if len(m.Settings.dirMatches) < 2 {
+		t.Fatalf("expected >=2 candidate matches, got %v", m.Settings.dirMatches)
+	}
+
+	out := plain(m.View())
+	for _, name := range []string{"apple", "apricot"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("completion dropdown should show %q in the frame:\n%s", name, out)
+		}
 	}
 }

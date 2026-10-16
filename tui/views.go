@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
@@ -102,7 +103,140 @@ func (m *Model) renderSettingsModal() string {
 		lp.Color(p.Accent),
 	)
 
-	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, box,
+	boxX := (m.terminalWidth - boxWidth) / 2
+	if boxX < 0 {
+		boxX = 0
+	}
+	boxY := (m.terminalHeight - boxHeight) / 2
+	if boxY < 0 {
+		boxY = 0
+	}
+
+	frame := lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, box,
 		lp.WithWhitespaceChars(" "),
-		lp.WithWhitespaceBackground(lp.Color(p.Background)))
+		lp.WithWhitespaceBackground(lp.Color(p.Background)),
+	)
+
+	return m.overlayCompletionDropdown(frame, boxX, boxY, boxWidth, boxHeight)
+}
+
+// overlayCompletionDropdown composites an IDE-style popup of the Download
+// Directory completion candidates over the settings modal, anchored on the
+// input's cursor. It only paints when a completion session with at least two
+// candidates is active.
+func (m *Model) overlayCompletionDropdown(frame string, boxX, boxY, boxWidth, boxHeight int) string {
+	setting := &m.Settings
+	if !setting.EditMode || setting.FocusIndex != settingDownloadDir {
+		return frame
+	}
+	matches := setting.dirMatches
+	if len(matches) < 2 {
+		return frame
+	}
+
+	listW, _, twoCol := setting.panes()
+	var valueViewLine, inputCol int
+	if twoCol {
+		valueViewLine = 2
+		inputCol = listW + 3 + 1 + width("Value: ") + 2
+	} else {
+		valueViewLine = settingCount + 1 + 2
+		inputCol = 1 + width("Value: ") + 2
+	}
+
+	input := setting.Inputs[settingDownloadDir]
+	pos := input.Position()
+	inWidth := input.Width
+	if inWidth < 1 {
+		inWidth = 1
+	}
+	visCol := pos
+	if visCol > inWidth-1 {
+		visCol = inWidth - 1
+	}
+	if visCol < 0 {
+		visCol = 0
+	}
+
+	anchorX := boxX + 1 + inputCol + visCol
+	if anchorX < 0 {
+		anchorX = 0
+	}
+	anchorY := boxY + valueViewLine + 3
+
+	// Cap the number of rows we actually display.
+	shown := len(matches)
+	availRows := m.terminalHeight - anchorY - 2
+	if availRows < 1 {
+		availRows = 1
+	}
+	if shown > availRows {
+		shown = availRows
+	}
+	if shown > settingsMaxDirMatches {
+		shown = settingsMaxDirMatches
+	}
+	if shown < 1 {
+		shown = 1
+	}
+	if shown > len(matches) {
+		shown = len(matches)
+	}
+
+	names := make([]string, shown)
+	for i := 0; i < shown; i++ {
+		names[i] = filepath.Base(matches[i])
+	}
+
+	dropW := 1
+	for _, n := range names {
+		if w := width(n); w > dropW {
+			dropW = w
+		}
+	}
+	dropW += 4
+	if dropW > boxWidth-2 {
+		dropW = boxWidth - 2
+	}
+	if dropW < 8 {
+		dropW = 8
+	}
+	inner := dropW - boxBorderFrameWidth
+	if inner < 1 {
+		inner = 1
+	}
+
+	p := m.Style.Palette
+	accent := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+	normal := lp.NewStyle().Foreground(lp.Color(p.Foreground))
+	muted := lp.NewStyle().Foreground(lp.Color(p.Muted))
+
+	cur := setting.dirMatchIdx
+	if cur < 0 {
+		cur = 0
+	}
+
+	contentLines := make([]string, 0, shown+1)
+	for i := 0; i < shown; i++ {
+		marker := "  "
+		st := normal
+		if i == cur {
+			marker = "\u25b8 "
+			st = accent
+		}
+		line := marker + names[i]
+		if w := width(line); w < inner {
+			line += strings.Repeat(" ", inner-w)
+		}
+		contentLines = append(contentLines, st.Render(truncate(line, inner)))
+	}
+	if len(matches) > shown {
+		overflow := fmt.Sprintf("\u2026 +%d more", len(matches)-shown)
+		contentLines = append(contentLines, muted.Render(truncate(overflow, inner)))
+	}
+
+	dropHeight := len(contentLines) + boxBorderFrameHeight
+	dropdown := renderBox("", "", strings.Join(contentLines, "\n"), dropW, dropHeight, lp.Color(p.Accent))
+
+	return overlayBlock(frame, dropdown, anchorX, anchorY, m.terminalWidth)
 }
