@@ -372,7 +372,8 @@ func (c *Commands) StartTicker() tea.Cmd {
 	}
 }
 
-// Global channel for program messages - kept for compatibility
+// programCh carries completion events from background download goroutines to
+// the UI, which drains it via ProgramMsgListener.
 var programCh = make(chan tea.Msg)
 
 // ProgramMsgListener returns a command that listens for program messages

@@ -26,11 +26,6 @@ import (
 const DownloadingDir = ".downloading"
 const OldBuildsDir = ".oldbuilds"
 
-// ExtractionVirtualSize is the synthetic total reported during the extraction
-// phase. We cannot know the uncompressed size up front, so the UI is driven
-// with a virtual byte budget tied to a 0.0-1.0 progress estimate.
-const ExtractionVirtualSize int64 = 100 * 1024 * 1024
-
 // Error constants
 var ErrCancelled = errors.New("operation cancelled")
 var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
@@ -902,8 +897,7 @@ func DownloadAndExtractBuild(
 	if extractErr != nil {
 		// Attempt to clean up partially extracted directory
 		if extractedRootDir != "" {
-			if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
-			}
+			_ = os.RemoveAll(extractedRootDir)
 		}
 		if errors.Is(extractErr, ErrCancelled) {
 			return "", ErrCancelled // Propagate cancellation

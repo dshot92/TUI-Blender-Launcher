@@ -106,8 +106,7 @@ type BlenderBuild struct {
 	ReleaseCycle    string    `json:"release_cycle"`  // e.g., "daily", "stable", "candidate" (replaces previous 'Type')
 
 	// Internal state (not from API)
-	Status BuildState // Changed from types.BuildState to BuildState
-	// Selected field removed - we only work with highlighted builds now
+	Status BuildState
 
 	// ChecksumURL points at the API's .sha256 sidecar for DownloadURL when the
 	// API provides one. Populated by the api package; empty means the download
@@ -131,7 +130,6 @@ func (b BlenderBuild) ID() string {
 // BlenderExecMsg is sent when Blender should be executed directly
 // This will cause the TUI to exit and exec Blender in its place
 type BlenderExecMsg struct {
-	Version    string // The version of Blender to launch
 	Executable string // The path to the Blender executable
 }
 

@@ -93,7 +93,7 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	if selectedBuild.Status == model.StateOnline ||
 		selectedBuild.Status == model.StateUpdate ||
 		selectedBuild.Status == model.StateFailed ||
-		selectedBuild.Status == model.StateCancelled { // StateNone == Cancelled
+		selectedBuild.Status == model.StateCancelled {
 
 		return m, func() tea.Msg {
 			return startDownloadMsg{build: *selectedBuild, buildID: selectedBuild.ID()}
@@ -144,7 +144,7 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	// Cancel the download using the download manager
 	m.commands.downloads.CancelDownload(buildID)
 
-	// Update the build status to Cancelled (StateNone) after cancellation
+	// Update the build status to Cancelled after cancellation
 	for i, build := range m.List.Builds {
 		bID := build.ID()
 
@@ -153,7 +153,7 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 			// Only update if it's in a downloading or extracting state
 			if m.List.Builds[i].Status == model.StateDownloading ||
 				m.List.Builds[i].Status == model.StateExtracting {
-				m.List.Builds[i].Status = model.StateCancelled // Set to Cancelled
+				m.List.Builds[i].Status = model.StateCancelled
 			}
 		}
 	}
@@ -329,10 +329,8 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 
 // handleBlenderExec handles launching Blender
 func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) {
-	execInfo := msg
 	return m, func() tea.Msg {
-		blenderExe := execInfo.Executable
-		err := launch.BlenderInNewTerminal(blenderExe)
+		err := launch.BlenderInNewTerminal(msg.Executable)
 		if err != nil {
 			return errMsg{fmt.Errorf("failed to launch Blender: %w", err)}
 		}
@@ -684,17 +682,12 @@ func (m *Model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 		return tickMsg(t)
 	})
 
-	// Also perform the logic of handleDownloadProgress to update statuses in the List
-	// We can extract that to a helper
 	m.updateBuildsStatusFromProgress()
 
 	return m, cmd
 }
 
 func (m *Model) updateBuildsStatusFromProgress() {
-	// This logic mimics handleDownloadProgress from original code
-	// updating m.List.Builds[i].Status based on m.Progress.DownloadStates
-
 	for i := range m.List.Builds {
 		buildID := m.List.Builds[i].ID()
 

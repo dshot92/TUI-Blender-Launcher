@@ -19,9 +19,6 @@ type Style struct {
 	SelectedRow        lp.Style
 
 	// Chrome
-	Key             lp.Style
-	Separator       lp.Style
-	Newline         lp.Style
 	Footer          lp.Style
 	PaneTitle       lp.Style
 	ActivePaneTitle lp.Style
@@ -29,7 +26,6 @@ type Style struct {
 
 	// Feedback
 	Error    lp.Style
-	Status   lp.Style
 	Empty    lp.Style
 	Muted    lp.Style
 	Label    lp.Style
@@ -74,15 +70,6 @@ func NewStyleFromPalette(p Palette) Style {
 			Background(subtle).
 			Bold(true),
 
-		Key: lp.NewStyle().
-			Foreground(accent).
-			Bold(true),
-
-		Separator: lp.NewStyle().
-			Foreground(subtle),
-
-		Newline: lp.NewStyle(),
-
 		Footer: lp.NewStyle().
 			Foreground(muted),
 
@@ -101,9 +88,6 @@ func NewStyleFromPalette(p Palette) Style {
 		Error: lp.NewStyle().
 			Foreground(lp.Color(p.Error)).
 			Bold(true),
-
-		Status: lp.NewStyle().
-			Foreground(lp.Color(p.Success)),
 
 		Empty: lp.NewStyle().
 			Foreground(muted).

@@ -133,7 +133,6 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 			return fmt.Errorf("could not find Blender executable in %s", dirPath)
 		}
 		return model.BlenderExecMsg{
-			Version:    version,
 			Executable: blenderExe,
 		}
 	}

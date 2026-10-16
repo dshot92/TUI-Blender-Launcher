@@ -9,34 +9,35 @@ import (
 
 // ListModel handles the state and logic for the build list view.
 type ListModel struct {
-	Builds          []model.BlenderBuild
-	Cursor          int
-	StartIndex      int
-	SortColumn      int
-	SortReversed    bool
-	TerminalHeight  int
-	VisibleRows     int   // rows available for the table body (set by the layout)
-	Style           Style // Keep Style here as well if needed for List specific rendering
-	LastRenderState map[string]float64
+	Builds         []model.BlenderBuild
+	Cursor         int
+	StartIndex     int
+	SortColumn     int
+	SortReversed   bool
+	TerminalHeight int
+	VisibleRows    int   // rows available for the table body (set by the layout)
+	Style          Style // Keep Style here as well if needed for List specific rendering
 }
 
 // NewListModel creates a new ListModel.
 func NewListModel(style Style) ListModel {
 	return ListModel{
-		SortColumn:      0,
-		SortReversed:    true,
-		Style:           style,
-		Builds:          []model.BlenderBuild{},
-		LastRenderState: make(map[string]float64),
+		SortColumn:   0,
+		SortReversed: true,
+		Style:        style,
+		Builds:       []model.BlenderBuild{},
 	}
 }
 
-// Init initializes the model.
+// Init initializes the model. It is required by the tea.Model interface that
+// ListModel.Update returns.
 func (m ListModel) Init() tea.Cmd {
 	return nil
 }
 
-// View returns the string representation of the model.
+// View returns the string representation of the model. It is required by the
+// tea.Model interface that ListModel.Update returns; the list is rendered by the
+// parent Model instead.
 func (m ListModel) View() string {
 	return ""
 }

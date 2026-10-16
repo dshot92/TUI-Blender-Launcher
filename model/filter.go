@@ -110,33 +110,3 @@ func (f *VersionFilter) Apply(builds []BlenderBuild) []BlenderBuild {
 func isWildcardToken(s string) bool {
 	return s == "x" || s == "X" || s == "*"
 }
-
-// isWildcard reports whether any component of the filter is the wildcard token.
-func isWildcard(s string) bool {
-	for _, comp := range strings.Split(s, ".") {
-		if isWildcardToken(comp) {
-			return true
-		}
-	}
-	return false
-}
-
-// wildcardPrefix is retained for compatibility with callers that inspect the
-// legacy wildcard form; it returns the numeric components with wildcards
-// normalized to 0.
-func wildcardPrefix(s string) ([]int, error) {
-	comps := strings.Split(s, ".")
-	prefix := make([]int, 0, len(comps))
-	for _, comp := range comps {
-		if isWildcardToken(comp) {
-			prefix = append(prefix, 0)
-			continue
-		}
-		n, err := strconv.Atoi(comp)
-		if err != nil {
-			return nil, fmt.Errorf("malformed version filter '%s': %q is not a number or wildcard", s, comp)
-		}
-		prefix = append(prefix, n)
-	}
-	return prefix, nil
-}
