@@ -83,3 +83,73 @@ func TestApplyVersionFilterInvalidIsNoop(t *testing.T) {
 		t.Fatalf("invalid filter should not drop builds, got %d", len(got))
 	}
 }
+
+func TestCommandsSetConfigPreservesDownloadStates(t *testing.T) {
+	c := NewCommands(config.Config{DownloadDir: "/old"})
+
+	buildID := "4.2.0-abcdef12"
+	c.downloads.mu.Lock()
+	c.downloads.states[buildID] = &model.DownloadState{
+		BuildID:    buildID,
+		BuildState: model.StateDownloading,
+		Progress:   0.42,
+		CancelCh:   make(chan struct{}),
+	}
+	c.downloads.mu.Unlock()
+
+	newCfg := config.Config{DownloadDir: "/new", VersionFilter: "4.2"}
+	c.SetConfig(newCfg)
+
+	if c.cfg.DownloadDir != "/new" || c.cfg.VersionFilter != "4.2" {
+		t.Errorf("commands config not updated: %+v", c.cfg)
+	}
+	if c.downloads.cfg.DownloadDir != "/new" {
+		t.Errorf("download manager config not updated: %+v", c.downloads.cfg)
+	}
+
+	states := c.downloads.GetAllStates()
+	state, ok := states[buildID]
+	if !ok {
+		t.Fatalf("download state lost after SetConfig: %+v", states)
+	}
+	if state.Progress != 0.42 {
+		t.Errorf("progress = %v, want 0.42", state.Progress)
+	}
+}
+
+func TestSaveSettingsAndReturnPreservesDownloads(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	cfg := config.Config{DownloadDir: t.TempDir(), BuildType: "daily"}
+	style := NewStyle()
+	m := &Model{
+		config:   cfg,
+		commands: NewCommands(cfg),
+		Settings: NewSettingsModel(cfg, style),
+		List:     NewListModel(style),
+		Progress: NewProgressModel(),
+		Style:    style,
+	}
+
+	buildID := "4.2.0-abcdef12"
+	m.commands.downloads.mu.Lock()
+	m.commands.downloads.states[buildID] = &model.DownloadState{
+		BuildID:    buildID,
+		BuildState: model.StateDownloading,
+		Progress:   0.5,
+		CancelCh:   make(chan struct{}),
+	}
+	m.commands.downloads.mu.Unlock()
+
+	// Mirror the cache the tick loop keeps in sync while in settings.
+	m.Progress.DownloadStates = m.commands.downloads.GetAllStates()
+
+	if _, cmd := m.SaveSettingsAndReturn(); cmd == nil {
+		t.Fatal("expected a refresh command after saving settings")
+	}
+
+	states := m.commands.downloads.GetAllStates()
+	if _, ok := states[buildID]; !ok {
+		t.Fatalf("download state lost after SaveSettingsAndReturn: %+v", states)
+	}
+}

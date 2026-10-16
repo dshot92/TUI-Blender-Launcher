@@ -38,6 +38,15 @@ func (dm *DownloadManager) GetState(buildID string) *model.DownloadState {
 	return dm.states[buildID].Clone()
 }
 
+// SetConfig updates the configuration used for future downloads without
+// discarding in-flight download state. The config is read under the same lock
+// in StartDownload, keeping concurrent access safe.
+func (dm *DownloadManager) SetConfig(cfg config.Config) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	dm.cfg = cfg
+}
+
 // GetAllStates returns a snapshot copy of all download states
 func (dm *DownloadManager) GetAllStates() map[string]*model.DownloadState {
 	dm.mu.Lock()
@@ -81,8 +90,12 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		CancelCh:    cancelCh,
 	}
 
+	// Capture the download directory now so a later config change (e.g. the
+	// user edits settings mid-download) does not redirect this download.
+	downloadDir := dm.cfg.DownloadDir
+
 	// Create a temporary directory for downloads if it doesn't exist
-	downloadTempDir := filepath.Join(dm.cfg.DownloadDir, download.DownloadingDir)
+	downloadTempDir := filepath.Join(downloadDir, download.DownloadingDir)
 	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
 		dm.states[buildID].BuildState = model.StateFailed
 		dm.mu.Unlock()
@@ -136,7 +149,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			})
 		}
 
-		_, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, downloadCb, extractCb, cancelCh)
+		_, err := download.DownloadAndExtractBuild(build, downloadDir, downloadCb, extractCb, cancelCh)
 
 		// Final state transition.
 		dm.mu.Lock()
@@ -215,6 +228,16 @@ func NewCommands(cfg config.Config) *Commands {
 	return &Commands{
 		cfg:       cfg,
 		downloads: NewDownloadManager(cfg),
+	}
+}
+
+// SetConfig updates the configuration used by subsequent commands and future
+// downloads while preserving the existing DownloadManager (and any in-flight
+// download state).
+func (c *Commands) SetConfig(cfg config.Config) {
+	c.cfg = cfg
+	if c.downloads != nil {
+		c.downloads.SetConfig(cfg)
 	}
 }
 

@@ -342,8 +342,14 @@ func (m *Model) SaveSettingsAndReturn() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Recreate commands with updated config
-	m.commands = NewCommands(m.config)
+	// Update the existing commands in place so in-flight download state is
+	// preserved. Recreating Commands would build a new DownloadManager and
+	// discard any active download progress.
+	if m.commands != nil {
+		m.commands.SetConfig(m.config)
+	} else {
+		m.commands = NewCommands(m.config)
+	}
 	m.err = nil
 
 	// Refresh list
