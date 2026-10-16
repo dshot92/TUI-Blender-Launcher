@@ -16,6 +16,11 @@ type Model struct {
 	// malformed value is shown instead of being silently ignored.
 	filterErr error
 
+	// settingsSaved is the last snapshot written to disk. The settings view
+	// persists the config automatically whenever the live values differ, so an
+	// edit survives without an explicit save.
+	settingsSaved SettingsValues
+
 	// statusToken identifies the most recent transient status message. Expiry
 	// timers carry the token they were scheduled for so a stale timer cannot
 	// clear a newer status.
@@ -63,6 +68,9 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		Style:       style,
 		detailShown: false,
 	}
+	// Treat the loaded config as the baseline so nothing is written until the
+	// user actually changes a setting.
+	m.settingsSaved = m.Settings.GetValues()
 
 	if needsSetup {
 		m.currentView = viewInitialSetup

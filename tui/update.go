@@ -4,6 +4,7 @@ import (
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -93,9 +94,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// so a malformed value surfaces in the toast instead of being
 			// silently ignored.
 			m.syncVersionFilterFeedback()
+			m.autoSaveSettings()
 			return mdl, c
 		}
 		m.syncVersionFilterFeedback()
+		m.autoSaveSettings()
 		return m, cmd
 
 	default: // viewList
@@ -118,6 +121,38 @@ func (m *Model) syncVersionFilterFeedback() {
 		}
 	}
 	m.filterErr = nil
+}
+
+// autoSaveSettings persists the settings whenever the user changes a value.
+// While a text field or the release-type multi-select is mid-edit it waits, so
+// a partially typed value (or a cancelable toggle selection) is never written;
+// the change is saved once the edit is committed. An unchanged snapshot is a
+// no-op, so plain navigation never touches the disk.
+func (m *Model) autoSaveSettings() {
+	if m.Settings.EditMode || m.Settings.releaseEditing {
+		return
+	}
+	cur := m.Settings.GetValues()
+	if settingsEqual(cur, m.settingsSaved) {
+		return
+	}
+	if err := m.SaveSettings(); err != nil {
+		m.err = err
+		return
+	}
+	if m.commands != nil {
+		m.commands.SetConfig(m.config)
+	}
+	m.settingsSaved = cur
+}
+
+// settingsEqual reports whether two settings snapshots are identical.
+func settingsEqual(a, b SettingsValues) bool {
+	return a.DownloadDir == b.DownloadDir &&
+		a.VersionFilter == b.VersionFilter &&
+		a.BuildType == b.BuildType &&
+		a.Theme == b.Theme &&
+		slices.Equal(a.ReleaseTypes, b.ReleaseTypes)
 }
 
 // updateSettingsViewController handles app-level logic for settings view
@@ -206,6 +241,8 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 						ReleaseTypes:  m.config.ReleaseTypes,
 						Theme:         m.config.Theme,
 					})
+					// Baseline for auto-save: nothing is written until an edit.
+					m.settingsSaved = m.Settings.GetValues()
 					return m, nil
 				case CmdFetchBuilds:
 					return m, m.commands.FetchBuilds()
