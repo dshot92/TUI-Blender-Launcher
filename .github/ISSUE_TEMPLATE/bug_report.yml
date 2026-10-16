@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a problem with TUI Blender Launcher
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `tui-blender-launcher --version`
+      placeholder: dev
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system / architecture
+      placeholder: Linux x86_64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
