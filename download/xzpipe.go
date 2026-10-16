@@ -31,12 +31,14 @@ func findSystemXz() string {
 }
 
 // systemXzStream is a `xz -dc` child decoding the archive on stdin.
-// The tar reader consumes s.rc; cleanup reaps the child.
+// The tar reader consumes s.rc; cleanup reaps the child and joins the
+// goroutine that feeds the child's stdin.
 type systemXzStream struct {
-	rc     io.ReadCloser
-	cancel context.CancelFunc
-	cmd    *exec.Cmd
-	stderr *bytes.Buffer
+	rc         io.ReadCloser
+	cancel     context.CancelFunc
+	cmd        *exec.Cmd
+	stderr     *bytes.Buffer
+	feederDone chan struct{}
 }
 
 // newSystemXzReader starts `xz -dc` (liblzma) with src as its stdin and
@@ -74,8 +76,11 @@ func newSystemXzReader(src io.Reader, cancelCh <-chan struct{}) (*systemXzStream
 	}
 
 	// Feed the archive to the child. Exits on EOF, on child death (EPIPE),
-	// or when stdin is closed after the tar loop ends.
+	// or when stdin is closed after the tar loop ends. feederDone lets cleanup
+	// join this goroutine so no progress callback can outlive extraction.
+	feederDone := make(chan struct{})
 	go func() {
+		defer close(feederDone)
 		_, _ = io.Copy(stdin, src)
 		_ = stdin.Close()
 	}()
@@ -90,15 +95,19 @@ func newSystemXzReader(src io.Reader, cancelCh <-chan struct{}) (*systemXzStream
 		}
 	}()
 
-	return &systemXzStream{rc: stdout, cancel: stop, cmd: cmd, stderr: &stderr}, nil
+	return &systemXzStream{rc: stdout, cancel: stop, cmd: cmd, stderr: &stderr, feederDone: feederDone}, nil
 }
 
 // cleanup reaps the child process. Call on every exit path, including
 // early ones: it kills the child first so Wait cannot block on a child
-// stuck writing to an unconsumed stdout pipe, then reaps it.
+// stuck writing to an unconsumed stdout pipe, then reaps it and joins the
+// stdin feeder goroutine.
 func (s *systemXzStream) cleanup() error {
 	s.cancel()
 	err := s.cmd.Wait()
+	if s.feederDone != nil {
+		<-s.feederDone
+	}
 	if err != nil {
 		if s.stderr.Len() > 0 {
 			return fmt.Errorf("xz -dc failed: %v: %s", err, s.stderr.String())

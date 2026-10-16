@@ -1,8 +1,8 @@
 package api
 
 import (
-	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/config"
+	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,11 +24,17 @@ type API struct {
 	client *http.Client
 }
 
-// NewAPI creates a new API client
+// NewAPI creates a new API client. The HTTP client is resolved at request
+// time (falling back to http.DefaultClient), so tests can inject a mock
+// RoundTripper via http.DefaultClient even after NewAPI is called.
 func NewAPI() *API {
-	return &API{
-		client: &http.Client{},
-	}
+	return &API{}
+}
+
+// NewAPIWithClient creates a new API client using the provided HTTP client.
+// Useful for testing or for callers that need custom transport settings.
+func NewAPIWithClient(client *http.Client) *API {
+	return &API{client: client}
 }
 
 // FetchBuilds fetches the list of Blender builds from the official API,
@@ -61,7 +67,14 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 	}
 	req.Header.Set("X-Client-UUID", cfg.UUID)
 
-	resp, err := a.client.Do(req)
+	// Resolve the HTTP client lazily so tests can override http.DefaultClient
+	// after NewAPI() has been called.
+	client := a.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch data: %w", err)
 	}

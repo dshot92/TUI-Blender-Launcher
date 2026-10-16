@@ -1,5 +1,7 @@
 BIN := $(HOME)/.local/bin/TUI-Blender-Launcher
 
+.PHONY: build install run uninstall test lint vet fmt
+
 build:
 	go build
 
@@ -13,3 +15,14 @@ run: install
 
 uninstall:
 	rm $(BIN)
+
+fmt:
+	gofmt -w .
+
+test:
+	go test -race ./...
+
+vet:
+	go vet ./...
+
+lint: fmt vet test

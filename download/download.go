@@ -132,17 +132,34 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	const bufferSize = 4 * 1024 * 1024 // 4MB buffer for better throughput
 	bufferedFile := bufio.NewReaderSize(file, bufferSize)
 
+	// progressCb may be invoked from the xz feeder goroutine (via the
+	// progress tracker) and from this goroutine. Serialize the calls and
+	// guarantee the 0.0 sample is emitted before any intermediate value.
+	var progressMu sync.Mutex
+	report := func(p float64) {
+		if progressCb == nil {
+			return
+		}
+		if p < 0 {
+			p = 0
+		} else if p > 1 {
+			p = 1
+		}
+		progressMu.Lock()
+		progressCb(p)
+		progressMu.Unlock()
+	}
+	report(0.0)
+
 	// Create a reader that will track read progress
 	progressBuffer := &progressTracker{
 		reader:   bufferedFile,
 		total:    archiveSize,
 		cancelCh: cancelCh,
 		callback: func(read, total int64) {
-			if progressCb != nil {
-				// Convert to estimated extraction progress (0.0-1.0)
-				estimatedProgress := float64(read) / float64(total)
-				progressCb(estimatedProgress)
-			}
+			// Convert to estimated extraction progress (0.0-1.0)
+			estimatedProgress := float64(read) / float64(total)
+			report(estimatedProgress)
 		},
 	}
 
@@ -172,10 +189,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	tarReader := tar.NewReader(bufferedXzReader)
 
 	copyBuffer := make([]byte, bufferSize)
-
-	if progressCb != nil {
-		progressCb(0.0)
-	}
 
 	const maxWorkers = 4
 	sem := make(chan struct{}, maxWorkers)
@@ -339,9 +352,7 @@ extractLoop:
 	// setFirstError directly (no channel: an error burst must not block).
 	wg.Wait()
 
-	if progressCb != nil {
-		progressCb(1.0)
-	}
+	report(1.0)
 
 	return firstErr
 }
@@ -407,9 +418,23 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 	const bufferSize = 4 * 1024 * 1024 // 4MB buffer
 	copyBuffer := make([]byte, bufferSize)
 
-	if progressCb != nil {
-		progressCb(0.0)
+	// progressCb is invoked from multiple extraction workers, so serialize
+	// the calls to keep the callback contract well-defined.
+	var progressMu sync.Mutex
+	report := func(p float64) {
+		if progressCb == nil {
+			return
+		}
+		if p < 0 {
+			p = 0
+		} else if p > 1 {
+			p = 1
+		}
+		progressMu.Lock()
+		progressCb(p)
+		progressMu.Unlock()
 	}
+	report(0.0)
 
 	var processedSize uint64
 	var processedSizeLock sync.Mutex
@@ -505,7 +530,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 				processedSizeLock.Unlock()
 
 				if progressCb != nil && totalSize > 0 {
-					progressCb(float64(currentSize) / float64(totalSize))
+					report(float64(currentSize) / float64(totalSize))
 				}
 			}(file, targetPath)
 		} else {
@@ -546,7 +571,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			processedSizeLock.Unlock()
 
 			if progressCb != nil && totalSize > 0 {
-				progressCb(float64(currentSize) / float64(totalSize))
+				report(float64(currentSize) / float64(totalSize))
 			}
 		}
 
@@ -555,16 +580,14 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			processedSizeLock.Lock()
 			currentSize := processedSize
 			processedSizeLock.Unlock()
-			progressCb(float64(currentSize) / float64(totalSize))
+			report(float64(currentSize) / float64(totalSize))
 		}
 	}
 
 cleanup:
 	wg.Wait()
 
-	if progressCb != nil {
-		progressCb(1.0)
-	}
+	report(1.0)
 
 	return firstErr
 }
