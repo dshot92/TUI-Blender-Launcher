@@ -84,7 +84,7 @@ func settingDescription(i int) string {
 	case settingDownloadDir:
 		return "Folder where downloaded Blender builds are stored."
 	case settingVersionFilter:
-		return "Only show builds matching this version (e.g., 4.0, 3.6, or 5.x for all 5s). Leave empty to show all."
+		return "Only show builds matching this version (e.g., 4.0, 3.6, or 5.x for all 5s). Defaults to 4.x. Leave empty to show all."
 	case settingBuildType:
 		return "Blender channel fetched from the BuildBot: daily, experimental or patch."
 	case settingReleaseFilter:

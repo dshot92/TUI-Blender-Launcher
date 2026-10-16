@@ -56,3 +56,15 @@ func TestReleaseFilterOptions(t *testing.T) {
 		t.Fatalf("ReleaseFilterOptions has %d entries, want %d", len(got), len(ReleaseCycles))
 	}
 }
+
+func TestAllReleaseTypes(t *testing.T) {
+	got := AllReleaseTypes()
+	if !reflect.DeepEqual(got, ReleaseCycles) {
+		t.Fatalf("AllReleaseTypes = %v, want %v", got, ReleaseCycles)
+	}
+	// The returned slice must be a copy: mutating it must not affect the source.
+	got[0] = "mutated"
+	if ReleaseCycles[0] == "mutated" {
+		t.Fatal("AllReleaseTypes returned a slice aliasing ReleaseCycles")
+	}
+}

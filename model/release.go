@@ -13,6 +13,12 @@ func ReleaseFilterOptions() []string {
 	return append([]string(nil), ReleaseCycles...)
 }
 
+// AllReleaseTypes returns every known release cycle. It is the default
+// selection so all release types are shown out of the box.
+func AllReleaseTypes() []string {
+	return append([]string(nil), ReleaseCycles...)
+}
+
 // ReleaseFilter is a selection of release cycles to show. An empty filter means
 // "all release cycles".
 type ReleaseFilter []string

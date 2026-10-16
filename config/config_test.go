@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,9 +12,15 @@ func TestDefaultConfig(t *testing.T) {
 	// Get the default config
 	cfg := DefaultConfig()
 
-	// Check that the version filter is empty
-	if cfg.VersionFilter != "" {
-		t.Errorf("Expected empty version filter, got %s", cfg.VersionFilter)
+	// The default version filter targets the current 4.x line.
+	if cfg.VersionFilter != "4.x" {
+		t.Errorf("Expected default version filter 4.x, got %s", cfg.VersionFilter)
+	}
+
+	// All release types are selected by default.
+	wantReleaseTypes := []string{"alpha", "beta", "candidate", "stable"}
+	if !reflect.DeepEqual(cfg.ReleaseTypes, wantReleaseTypes) {
+		t.Errorf("Expected release types %v, got %v", wantReleaseTypes, cfg.ReleaseTypes)
 	}
 
 	// Check that the download dir is set to a reasonable default
@@ -106,8 +113,8 @@ func TestLoadConfig(t *testing.T) {
 				if cfg.DownloadDir != expectedPath {
 					t.Errorf("Expected download dir %s, got %s", expectedPath, cfg.DownloadDir)
 				}
-				if cfg.VersionFilter != "" {
-					t.Errorf("Expected empty version filter, got %s", cfg.VersionFilter)
+				if cfg.VersionFilter != "4.x" {
+					t.Errorf("Expected default version filter 4.x, got %s", cfg.VersionFilter)
 				}
 			},
 		},

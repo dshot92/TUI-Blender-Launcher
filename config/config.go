@@ -54,10 +54,11 @@ func DefaultConfig() Config {
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,
-		VersionFilter: "",                  // No filter by default
-		BuildType:     "daily",             // Default to patch builds
-		Theme:         "dracula",           // Default UI palette
-		UUID:          uuid.New().String(), // Generate a new UUID
+		VersionFilter: "4.x",                   // Show the current 4.x line by default
+		BuildType:     "daily",                 // Default to daily builds
+		ReleaseTypes:  model.AllReleaseTypes(), // Show every release type by default
+		Theme:         "dracula",               // Default UI palette
+		UUID:          uuid.New().String(),     // Generate a new UUID
 	}
 }
 
