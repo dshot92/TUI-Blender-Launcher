@@ -256,8 +256,14 @@ extractLoop:
 		}
 		entryCount++
 
-		// Use header.Name as is without modifying the path
-		targetPath := filepath.Join(destDir, header.Name)
+		// Resolve the entry against destDir, rejecting any path that would
+		// escape it (e.g. "../.." traversal). Entry names use forward slashes
+		// regardless of platform, so they are normalized first.
+		targetPath, err := safeJoin(destDir, header.Name)
+		if err != nil {
+			setFirstError(fmt.Errorf("illegal path in archive: %w", err))
+			break extractLoop
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -488,11 +494,14 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			break
 		}
 
-		// Get proper file path ensuring no path traversal
-		targetPath := filepath.Join(destDir, file.Name)
-
-		// Make sure we follow zip entry slashes on Windows
-		targetPath = filepath.FromSlash(targetPath)
+		// Resolve the entry against destDir, rejecting any path that would
+		// escape it. filepath.FromSlash runs inside safeJoin so zip entries
+		// (which always use "/") map correctly on Windows.
+		targetPath, err := safeJoin(destDir, file.Name)
+		if err != nil {
+			setFirstError(fmt.Errorf("illegal path in archive: %w", err))
+			break
+		}
 
 		if file.FileInfo().IsDir() {
 			// Create directory
@@ -607,6 +616,22 @@ cleanup:
 	report(1.0)
 
 	return firstErr
+}
+
+// safeJoin resolves an archive entry name against destDir, returning an error
+// when the result would escape destDir (e.g. an entry such as "../../etc/passwd").
+// Archive entry names always use forward slashes, so they are normalized before
+// joining; this also makes zip entries extract correctly on Windows.
+func safeJoin(destDir, name string) (string, error) {
+	target := filepath.Join(destDir, filepath.FromSlash(name))
+	rel, err := filepath.Rel(destDir, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("illegal path %q in archive", name)
+	}
+	return target, nil
 }
 
 // findRootDirInZip peeks into the ZIP archive to find the root directory name

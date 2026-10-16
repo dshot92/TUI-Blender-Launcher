@@ -134,6 +134,13 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 		apiArch = currentArch
 	}
 
+	// Accept the mapped architecture plus any known aliases. Blender labels
+	// Linux ARM builds "aarch64", while Go reports "arm64".
+	allowedArch := map[string]bool{apiArch: true}
+	if currentOS == "linux" && currentArch == "arm64" {
+		allowedArch["aarch64"] = true
+	}
+
 	allowedExtensions := map[string]bool{
 		"zip": true, "tar.gz": true, "tar.xz": true, "tar.bz2": true,
 		"xz": true, "dmg": true, "pkg": true,
@@ -157,8 +164,8 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 		if build.OperatingSystem != currentOS {
 			continue
 		}
-		// Check Arch: Use the explicitly mapped apiArch
-		if build.Architecture != apiArch {
+		// Check Arch against the mapped value and any accepted aliases.
+		if !allowedArch[build.Architecture] {
 			continue
 		}
 		// Check Extension

@@ -38,7 +38,7 @@ For more information about the Blender BuildBot and its API, visit the [official
 
 ### Prerequisites
 
-- Go 1.18 or higher
+- Go 1.23 or higher
 - Git
 
 ### Building from Source
@@ -76,7 +76,7 @@ Settings are saved in your system's user configuration directory:
 
 Default config.toml:
 ```toml
-download_dir = "[HOME-DIR]/blender/blender-build"
+download_dir = "[HOME-DIR]/blender/blender-builds"
 version_filter = ""
 build_type = "daily"
 theme = "dracula"
