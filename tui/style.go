@@ -4,66 +4,127 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// Style aggregates all lipgloss styles used across the TUI.
-// Centralizing styles keeps rendering code clean and consistent.
+// Style aggregates all lipgloss styles used across the TUI. Centralizing styles
+// keeps rendering code clean and consistent, and deriving every style from a
+// Palette means the whole UI can be re-themed from one place.
 type Style struct {
+	// The active palette, exposed for components that need raw colors
+	// (borders, badges, gradients).
+	Palette Palette
+
+	// Table
 	HeaderCell         lp.Style
 	SelectedHeaderCell lp.Style
 	RegularRow         lp.Style
 	SelectedRow        lp.Style
-	Key                lp.Style
-	Separator          lp.Style
-	Newline            lp.Style
-	Footer             lp.Style
-	Error              lp.Style
-	Status             lp.Style
+
+	// Chrome
+	Key             lp.Style
+	Separator       lp.Style
+	Newline         lp.Style
+	Footer          lp.Style
+	PaneTitle       lp.Style
+	ActivePaneTitle lp.Style
+	Title           lp.Style
+
+	// Feedback
+	Error    lp.Style
+	Status   lp.Style
+	Empty    lp.Style
+	Muted    lp.Style
+	Label    lp.Style
+	Value    lp.Style
+	HelpKey  lp.Style
+	HelpDesc lp.Style
+	HelpSep  lp.Style
 }
 
 // NewStyle constructs the default UI style palette.
 func NewStyle() Style {
-	baseText := lp.Color(textColor)
-	bg := lp.Color(backgroundColor)
-	hl := lp.Color(highlightColor)
+	return NewStyleFromPalette(DefaultPalette())
+}
+
+// NewStyleFromPalette constructs the UI styles for a given palette.
+func NewStyleFromPalette(p Palette) Style {
+	fg := lp.Color(p.Foreground)
+	muted := lp.Color(p.Muted)
+	subtle := lp.Color(p.Subtle)
+	accent := lp.Color(p.Accent)
 
 	return Style{
+		Palette: p,
+
 		HeaderCell: lp.NewStyle().
-			Foreground(baseText).
-			Background(bg).
-			Align(lp.Center).
-			Bold(true),
+			Foreground(muted).
+			Bold(true).
+			Align(lp.Center),
 
 		SelectedHeaderCell: lp.NewStyle().
-			Foreground(baseText).
-			Background(hl).
+			Foreground(accent).
 			Bold(true).
-			Align(lp.Center).
-			BorderForeground(hl),
+			Underline(true).
+			Align(lp.Center),
 
 		RegularRow: lp.NewStyle().
-			Foreground(baseText),
+			Foreground(fg),
 
 		SelectedRow: lp.NewStyle().
-			Foreground(lp.Color(textColor)).
-			Background(hl).
-			BorderForeground(hl),
+			Foreground(fg).
+			Background(subtle).
+			Bold(true),
 
 		Key: lp.NewStyle().
-			Foreground(hl).
+			Foreground(accent).
 			Bold(true),
 
 		Separator: lp.NewStyle().
-			Foreground(lp.Color("241")),
+			Foreground(subtle),
 
 		Newline: lp.NewStyle(),
 
 		Footer: lp.NewStyle().
-			Foreground(baseText),
+			Foreground(muted),
+
+		PaneTitle: lp.NewStyle().
+			Foreground(fg).
+			Bold(true),
+
+		ActivePaneTitle: lp.NewStyle().
+			Foreground(accent).
+			Bold(true),
+
+		Title: lp.NewStyle().
+			Foreground(accent).
+			Bold(true),
 
 		Error: lp.NewStyle().
-			Foreground(lp.Color(redColor)).
+			Foreground(lp.Color(p.Error)).
 			Bold(true),
 
 		Status: lp.NewStyle().
-			Foreground(lp.Color(greenColor)),
+			Foreground(lp.Color(p.Success)),
+
+		Empty: lp.NewStyle().
+			Foreground(muted).
+			Italic(true),
+
+		Muted: lp.NewStyle().
+			Foreground(muted),
+
+		Label: lp.NewStyle().
+			Foreground(accent),
+
+		Value: lp.NewStyle().
+			Foreground(fg),
+
+		HelpKey: lp.NewStyle().
+			Foreground(accent).
+			Bold(true),
+
+		HelpDesc: lp.NewStyle().
+			Foreground(muted),
+
+		HelpSep: lp.NewStyle().
+			Foreground(subtle),
 	}
 }

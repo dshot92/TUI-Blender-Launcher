@@ -15,6 +15,7 @@ type ListModel struct {
 	SortColumn      int
 	SortReversed    bool
 	TerminalHeight  int
+	VisibleRows     int   // rows available for the table body (set by the layout)
 	Style           Style // Keep Style here as well if needed for List specific rendering
 	LastRenderState map[string]float64
 }
@@ -98,6 +99,9 @@ func (m *ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *ListModel) GetVisibleRowsCount() int {
+	if m.VisibleRows > 0 {
+		return m.VisibleRows
+	}
 	if m.TerminalHeight < 7 {
 		return 1
 	}

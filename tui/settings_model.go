@@ -19,6 +19,9 @@ type SettingsModel struct {
 	BuildType        string
 	BuildTypeOptions []string
 	BuildTypeIndex   int
+	Theme            string
+	ThemeOptions     []string
+	ThemeIndex       int
 	Style            Style
 	Config           config.Config
 	width            int
@@ -31,6 +34,7 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 		Style:            style,
 		BuildTypeOptions: []string{"daily", "experimental", "patch"},
 		BuildType:        cfg.BuildType,
+		ThemeOptions:     PaletteNames(),
 		FocusIndex:       0,
 		EditMode:         false,
 	}
@@ -43,8 +47,6 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 	t.Placeholder = cfg.DownloadDir
 	t.SetValue(cfg.DownloadDir)
 	t.CharLimit = 256
-	// We'll set width dynamically in View or SetWidth if possible,
-	// but for now initialized width is okay.
 	t.Width = 50
 	m.Inputs[0] = t
 
@@ -64,6 +66,9 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 		}
 	}
 
+	// Resolve the configured theme so the selection is always valid.
+	m.setTheme(cfg.Theme)
+
 	m.updateFocusStyles()
 
 	return m
@@ -74,133 +79,88 @@ func (m SettingsModel) Init() tea.Cmd {
 	return nil
 }
 
-// SetWidth updates the width of the settings model
+// SetWidth updates the content width available to the settings view.
 func (m *SettingsModel) SetWidth(w int) {
+	if w < 20 {
+		w = 20
+	}
 	m.width = w
+	for i := range m.Inputs {
+		iw := w - 6
+		if iw < 10 {
+			iw = 10
+		}
+		m.Inputs[i].Width = iw
+	}
 }
 
-// View returns the string representation of the model.
+// View returns the settings content, consistently left-aligned.
 func (m SettingsModel) View() string {
-	var b strings.Builder
-
-	// Calculate effective width for alignment
 	effectiveWidth := m.width
 	if effectiveWidth <= 0 {
-		effectiveWidth = 80 // Fallback
+		effectiveWidth = 60
 	}
 
-	// Styles
-	// Helper to get alignment based on index
-	getAlign := func(index int) lp.Position {
-		switch index {
-		case 0:
-			return lp.Left
-		case 1:
-			return lp.Center
-		case 2:
-			return lp.Right
-		default:
-			return lp.Left
+	p := m.Style.Palette
+	labelStyle := lp.NewStyle().Bold(true).Foreground(lp.Color(p.Accent))
+	labelFocused := lp.NewStyle().Bold(true).
+		Foreground(lp.Color(p.Background)).
+		Background(lp.Color(p.Accent))
+	descStyle := lp.NewStyle().Italic(true).Foreground(lp.Color(p.Muted))
+	optionStyle := lp.NewStyle().Padding(0, 1).Foreground(lp.Color(p.Muted))
+	optionActive := lp.NewStyle().Padding(0, 1).Bold(true).
+		Foreground(lp.Color(p.Background)).
+		Background(lp.Color(p.Accent))
+
+	// section renders a label, a control line, and a description, all left
+	// aligned and indented consistently.
+	section := func(index int, label, description, control string) string {
+		lbl := labelStyle
+		if m.FocusIndex == index {
+			lbl = labelFocused
 		}
+		var b strings.Builder
+		b.WriteString(lbl.Width(effectiveWidth).Render("  " + label))
+		b.WriteString("\n")
+		b.WriteString(lp.NewStyle().Width(effectiveWidth).Render(truncate("  "+control, effectiveWidth)))
+		b.WriteString("\n")
+		b.WriteString(descStyle.Width(effectiveWidth).Render(truncate("  "+description, effectiveWidth)))
+		b.WriteString("\n\n")
+		return b.String()
 	}
 
-	// Common base styles
-	labelBase := lp.NewStyle().Bold(true).Foreground(lp.Color(highlightColor))
-	labelFocusedBase := lp.NewStyle().Bold(true).Background(lp.Color(highlightColor)).Foreground(lp.Color(backgroundColor))
+	var b strings.Builder
+	b.WriteString(section(0, "Download Directory",
+		"Path where Blender builds are stored.",
+		m.Inputs[0].View()))
 
-	// Content styles - Always Left Aligned as requested ("setting portion ... make them all left aligned")
-	inputBase := lp.NewStyle().MarginLeft(2).Align(lp.Left)
-	descBase := lp.NewStyle().Italic(true).Foreground(lp.Color("241")).Align(lp.Left)
+	b.WriteString(section(1, "Version Filter",
+		"Only show builds at or above this version (empty = all).",
+		m.Inputs[1].View()))
 
-	// Section takes full width
-	sectionBase := lp.NewStyle().MarginBottom(2).Width(effectiveWidth)
-
-	optionStyle := lp.NewStyle().MarginRight(1).Padding(0, 1)
-	selectedOptionStyle := lp.NewStyle().MarginRight(1).Padding(0, 1).
-		Foreground(lp.Color(textColor)).Background(lp.Color(highlightColor))
-
-	// Helper to render a text input setting
-	renderTextSetting := func(index int, label, description string) string {
-		labelAlign := getAlign(index)
-
-		// Labels: Mixed Alignment
-		lblStyle := labelBase.Align(labelAlign).Width(effectiveWidth)
-		lblStyleFocused := labelFocusedBase.Align(labelAlign).Width(effectiveWidth)
-
-		var sb strings.Builder
-		isFocused := (m.FocusIndex == index)
-
-		if isFocused {
-			sb.WriteString(lblStyleFocused.Render(label))
+	var options strings.Builder
+	for _, option := range m.BuildTypeOptions {
+		if option == m.BuildType {
+			options.WriteString(optionActive.Render(option))
 		} else {
-			sb.WriteString(lblStyle.Render(label))
+			options.WriteString(optionStyle.Render(option))
 		}
-		sb.WriteString("\n")
-
-		// Input: Always Left Aligned
-		inputView := m.Inputs[index].View()
-		inpStyle := inputBase.Width(effectiveWidth)
-
-		sb.WriteString(inpStyle.Render(inputView))
-		sb.WriteString("\n")
-
-		// Description: Always Left Aligned
-		dStyle := descBase.Width(effectiveWidth)
-		sb.WriteString(dStyle.Render(description))
-
-		// Wrap in section style
-		return sectionBase.Render(sb.String())
 	}
+	b.WriteString(section(len(m.Inputs), "Build Type",
+		"Default build type to fetch from the Blender BuildBot.", options.String()))
 
-	renderBuildTypeSetting := func(label, description string) string {
-		index := 2                    // Hardcoded as 3rd item
-		labelAlign := getAlign(index) // Right
-
-		// Labels: Mixed Alignment
-		lblStyle := labelBase.Align(labelAlign).Width(effectiveWidth)
-		lblStyleFocused := labelFocusedBase.Align(labelAlign).Width(effectiveWidth)
-
-		var sb strings.Builder
-		isFocused := (m.FocusIndex == len(m.Inputs))
-
-		if isFocused {
-			sb.WriteString(lblStyleFocused.Render(label))
+	var themeOptions strings.Builder
+	for _, option := range m.ThemeOptions {
+		if option == m.Theme {
+			themeOptions.WriteString(optionActive.Render(option))
 		} else {
-			sb.WriteString(lblStyle.Render(label))
+			themeOptions.WriteString(optionStyle.Render(option))
 		}
-		sb.WriteString("\n")
-
-		var horizontalOptions strings.Builder
-		selectedBuildType := m.BuildType
-		for _, option := range m.BuildTypeOptions {
-			if option == selectedBuildType {
-				horizontalOptions.WriteString(selectedOptionStyle.Render(option))
-			} else {
-				horizontalOptions.WriteString(optionStyle.Render(option))
-			}
-		}
-
-		// Options: Always Left Aligned
-		// Using MarginLeft(2) to match inputBase for consistency or just Left?
-		// User said "make them all left aligned". Input has MarginLeft(2). Let's match it usually.
-		optsStyle := lp.NewStyle().MarginLeft(2).Align(lp.Left).Width(effectiveWidth)
-		sb.WriteString(optsStyle.Render(horizontalOptions.String()))
-		sb.WriteString("\n")
-
-		// Description: Always Left Aligned
-		dStyle := descBase.Width(effectiveWidth)
-		sb.WriteString(dStyle.Render(description))
-
-		return sectionBase.Render(sb.String())
 	}
+	b.WriteString(section(len(m.Inputs)+1, "Theme",
+		"UI color palette (previewed immediately, saved on exit).", themeOptions.String()))
 
-	// Render each setting
-	b.WriteString(renderTextSetting(0, "Download Directory", "Path where Blender builds will be stored."))
-	b.WriteString(renderTextSetting(1, "Version Filter", "Filter versions (e.g., '4.2', '3.6'). Leave empty for all."))
-	b.WriteString(renderBuildTypeSetting("Build Type", "Select default build type to fetch."))
-
-	// Final container
-	return lp.NewStyle().Width(effectiveWidth).Padding(1, 2).Render(b.String())
+	return b.String()
 }
 
 // Update handles update messages for the settings model.
@@ -229,7 +189,7 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case CmdMoveUp:
 					if !m.EditMode {
-						totalItems := len(m.Inputs) + 1
+						totalItems := len(m.Inputs) + 2
 						m.FocusIndex = (m.FocusIndex - 1 + totalItems) % totalItems
 						m.updateFocusStyles()
 						return m, nil
@@ -237,7 +197,7 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case CmdMoveDown:
 					if !m.EditMode {
-						totalItems := len(m.Inputs) + 1
+						totalItems := len(m.Inputs) + 2
 						m.FocusIndex = (m.FocusIndex + 1) % totalItems
 						m.updateFocusStyles()
 						return m, nil
@@ -249,11 +209,21 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.BuildType = m.BuildTypeOptions[m.BuildTypeIndex]
 						return m, nil
 					}
+					if !m.EditMode && m.FocusIndex == len(m.Inputs)+1 {
+						m.ThemeIndex = (m.ThemeIndex - 1 + len(m.ThemeOptions)) % len(m.ThemeOptions)
+						m.Theme = m.ThemeOptions[m.ThemeIndex]
+						return m, nil
+					}
 
 				case CmdMoveRight:
 					if !m.EditMode && m.FocusIndex == len(m.Inputs) {
 						m.BuildTypeIndex = (m.BuildTypeIndex + 1) % len(m.BuildTypeOptions)
 						m.BuildType = m.BuildTypeOptions[m.BuildTypeIndex]
+						return m, nil
+					}
+					if !m.EditMode && m.FocusIndex == len(m.Inputs)+1 {
+						m.ThemeIndex = (m.ThemeIndex + 1) % len(m.ThemeOptions)
+						m.Theme = m.ThemeOptions[m.ThemeIndex]
 						return m, nil
 					}
 				}
@@ -270,22 +240,19 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateFocusStyles applies the palette to the text inputs based on focus.
 func (m *SettingsModel) updateFocusStyles() {
+	p := m.Style.Palette
+	base := lp.NewStyle().Foreground(lp.Color(p.Foreground))
+	focused := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+
 	for i := range m.Inputs {
-		if i == m.FocusIndex {
-			// m.Inputs[i].PromptStyle = m.Style.SelectedRow // This was causing some issues with textinput style maybe?
-			// Let's use specific textinput styles if possible or keep simple
-			// The cursor style is handled by textinput itself.
-			if m.EditMode {
-				m.Inputs[i].Focus()
-				m.Inputs[i].TextStyle = m.Style.SelectedRow
-			} else {
-				m.Inputs[i].Blur()
-				m.Inputs[i].TextStyle = m.Style.RegularRow
-			}
+		if i == m.FocusIndex && m.EditMode {
+			m.Inputs[i].Focus()
+			m.Inputs[i].TextStyle = focused
 		} else {
 			m.Inputs[i].Blur()
-			m.Inputs[i].TextStyle = m.Style.RegularRow
+			m.Inputs[i].TextStyle = base
 		}
 	}
 }
@@ -320,12 +287,12 @@ func (m *SettingsModel) handleDirCompletion() (tea.Model, tea.Cmd) {
 }
 
 // GetValues returns the current values from the inputs
-func (m *SettingsModel) GetValues() (downloadDir string, versionFilter string, buildType string) {
-	return m.Inputs[0].Value(), m.Inputs[1].Value(), m.BuildType
+func (m *SettingsModel) GetValues() (downloadDir, versionFilter, buildType, theme string) {
+	return m.Inputs[0].Value(), m.Inputs[1].Value(), m.BuildType, m.Theme
 }
 
 // SetValues sets the values (e.g., when reloading config)
-func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType string) {
+func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType, theme string) {
 	m.Inputs[0].SetValue(downloadDir)
 	m.Inputs[1].SetValue(versionFilter)
 
@@ -333,6 +300,21 @@ func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType string) 
 	for i, opt := range m.BuildTypeOptions {
 		if opt == buildType {
 			m.BuildTypeIndex = i
+			break
+		}
+	}
+
+	m.setTheme(theme)
+}
+
+// setTheme selects a palette by name, normalizing unknown names to the default
+// so the selection always points at a valid option.
+func (m *SettingsModel) setTheme(theme string) {
+	m.Theme = ResolvePalette(theme).Name
+	m.ThemeIndex = 0
+	for i, opt := range m.ThemeOptions {
+		if opt == m.Theme {
+			m.ThemeIndex = i
 			break
 		}
 	}

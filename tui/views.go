@@ -1,83 +1,80 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+
+	lp "github.com/charmbracelet/lipgloss"
 )
 
+// renderPageForView assembles the full frame: header box, optional status line,
+// the body (builds + optional detail pane, or settings), and the footer.
 func (m *Model) renderPageForView() string {
-	// Define fixed heights
-	headerHeight := 2
-	footerHeight := 2
-
-	// Fixed items: header, footer, 2 separator lines
-	fixedHeightItems := headerHeight + footerHeight + 2
-
-	// Optional status/error line shown just above the footer
-	statusLine := ""
-	if m.err != nil {
-		statusLine = m.Style.Error.Render("! " + m.err.Error())
-	} else if m.status != "" {
-		statusLine = m.Style.Status.Render(m.status)
+	if m.terminalWidth <= 0 || m.terminalHeight <= 0 {
+		return "Loading…"
 	}
-	if statusLine != "" {
-		fixedHeightItems++
+	if m.terminalWidth < minTermWidth || m.terminalHeight < minTermHeight {
+		msg := m.Style.Empty.Render(fmt.Sprintf("Terminal too small — need at least %d×%d", minTermWidth, minTermHeight))
+		msg = truncate(msg, m.terminalWidth)
+		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, msg)
 	}
 
-	// Calculate content height
-	contentHeight := m.terminalHeight - fixedHeightItems
-	if contentHeight < 1 {
-		contentHeight = 1
-	}
+	m.computeLayout()
 
-	// Generate app components
-	header := renderHeader(m.terminalWidth)
+	header := renderHeader(m)
 
-	// Create slim horizontal separators
-	separatorStyle := m.Style.Separator
-	separator := separatorStyle.Render(strings.Repeat(" ", m.terminalWidth))
-
-	// Generate content and footer based on current view
-	var content string
-	var footer string
-
+	var body, footer string
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		content = m.Settings.View()
+		body = m.renderSettingsPane()
 		footer = m.renderSettingsFooter()
 	} else {
-		content = m.renderBuildContent(contentHeight)
+		body = m.renderBody()
 		footer = m.renderBuildFooter()
 	}
 
-	// Calculate padding needed to push footer to bottom
-	renderedContentLines := strings.Count(content, "\n") + 1
-	paddingLines := 0
-	if renderedContentLines < contentHeight {
-		paddingLines = contentHeight - renderedContentLines
+	var statusLine string
+	if m.err != nil {
+		statusLine = m.Style.Error.Render(truncate(" ! "+m.err.Error(), m.terminalWidth))
+	} else if m.status != "" {
+		statusLine = m.Style.Status.Render(truncate(" "+m.status, m.terminalWidth))
 	}
 
-	// Use lipgloss to create styled newlines for padding
-	paddingStyle := m.Style.Separator
-	padding := paddingStyle.Render(strings.Repeat("\n", paddingLines))
-
-	// Create newline style for joining sections
-	newlineStyle := m.Style.Newline.Render("\n")
-
-	// Build the final view with all components properly styled
-	var view strings.Builder
-	view.WriteString(header)
-	view.WriteString(newlineStyle)
-	view.WriteString(separator)
-	view.WriteString(newlineStyle)
-	view.WriteString(content)
-	view.WriteString(padding)
-	view.WriteString(newlineStyle)
+	parts := make([]string, 0, 4)
+	parts = append(parts, header)
 	if statusLine != "" {
-		view.WriteString(statusLine)
-		view.WriteString(newlineStyle)
+		parts = append(parts, statusLine)
 	}
-	view.WriteString(separator)
-	view.WriteString(newlineStyle)
-	view.WriteString(footer)
+	parts = append(parts, body, footer)
 
-	return view.String()
+	return strings.Join(parts, "\n")
+}
+
+// renderBody lays out the builds pane and, when shown, the detail pane either
+// beside it (wide terminals) or docked below it (narrow terminals).
+func (m *Model) renderBody() string {
+	builds := m.renderBuildsPane(m.layout.listBoxWidth, m.layout.listBoxHeight)
+	if !m.layout.detailVisible {
+		return builds
+	}
+	detail := m.renderDetailPane(m.layout.detailBoxWidth, m.layout.detailBoxHeight)
+	if m.layout.detailStacked {
+		return builds + "\n" + detail
+	}
+	return joinColumns(builds, detail, strings.Repeat(" ", paneGap))
+}
+
+// renderSettingsPane wraps the settings content in a centered bordered pane.
+func (m *Model) renderSettingsPane() string {
+	title := " Settings "
+	if m.currentView == viewInitialSetup {
+		title = " Welcome — Initial Setup "
+	}
+	box := renderBox("",
+		m.Style.ActivePaneTitle.Render(title),
+		m.Settings.View(),
+		m.layout.settingsWidth,
+		m.layout.bodyHeight,
+		lp.Color(m.Style.Palette.Accent),
+	)
+	return lp.Place(m.terminalWidth, m.layout.bodyHeight, lp.Center, lp.Top, box)
 }

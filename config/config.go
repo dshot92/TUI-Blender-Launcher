@@ -18,6 +18,7 @@ type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
 	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
+	Theme         string `toml:"theme"`          // UI palette name (dracula, catppuccin, nord, gruvbox, tokyonight)
 	UUID          string `toml:"uuid"`           // Unique identifier for this instance
 }
 
@@ -52,6 +53,7 @@ func DefaultConfig() Config {
 		DownloadDir:   defaultDownloadPath,
 		VersionFilter: "",                  // No filter by default
 		BuildType:     "daily",             // Default to patch builds
+		Theme:         "dracula",           // Default UI palette
 		UUID:          uuid.New().String(), // Generate a new UUID
 	}
 }
@@ -101,6 +103,11 @@ func LoadConfig() (Config, error) {
 			return cfg, fmt.Errorf("could not get home directory to expand path: %w", err)
 		}
 		cfg.DownloadDir = filepath.Join(homeDir, cfg.DownloadDir[1:])
+	}
+
+	// Ensure a palette is always selected.
+	if cfg.Theme == "" {
+		cfg.Theme = "dracula"
 	}
 
 	return cfg, nil

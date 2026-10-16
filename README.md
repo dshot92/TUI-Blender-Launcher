@@ -14,6 +14,8 @@ A Terminal User Interface (TUI) application written in Go for finding, downloadi
 - Launch installed Blender versions directly from the TUI
 - Clean up old builds to free disk space
 - Configurable download directory
+- Detail pane showing full information about the selected build
+- Themeable UI with several built-in color palettes
 - Multi-platform support (Linux, Windows, macOS)
 
 ## Blender BuildBot API
@@ -77,8 +79,23 @@ Default config.toml:
 download_dir = "[HOME-DIR]/blender/blender-build"
 version_filter = ""
 build_type = "daily"
+theme = "dracula"
 uuid = "e9b26094-0ecc-4177-8d9e-d13a440ab51e" # Random UUID generated on first run
 ```
+
+### Themes
+
+The `theme` key selects the UI color palette. Built-in options:
+
+| Name | Description |
+| --- | --- |
+| `dracula` | Dracula palette (default) |
+| `catppuccin` | Catppuccin Mocha |
+| `nord` | Nord |
+| `gruvbox` | Gruvbox Dark |
+| `tokyonight` | Tokyo Night |
+
+An unknown or empty value falls back to `dracula`.
 
 Downloading builds will be stored in `[download_dir]/.downloading`.
 
@@ -105,6 +122,7 @@ The application uses keyboard shortcuts for navigation:
 - <kbd>d</kbd>: Download selected build (only for online/update builds)
 
 - <kbd>r</kbd>: Reverse sort order
+- <kbd>Tab</kbd>: Show/hide the build info panel (docks below the list on narrow terminals)
 - <kbd>s</kbd>: Settings
 - <kbd>q</kbd>: Quit application
 

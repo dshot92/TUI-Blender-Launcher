@@ -99,6 +99,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateSettingsViewController handles app-level logic for settings view
 func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (tea.Model, tea.Cmd) {
+	// Live-preview the selected palette as the user cycles options.
+	if m.Settings.Theme != m.Style.Palette.Name {
+		m.setTheme(ResolvePalette(m.Settings.Theme))
+	}
+
 	// We check for specific commands that trigger state changes in the main model
 	for _, cmd := range GetCommandsForView(m.currentView) {
 		if MatchKey(msg, cmd.Type) {
@@ -168,7 +173,7 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				case CmdShowSettings:
 					m.currentView = viewSettings
-					m.Settings.SetValues(m.config.DownloadDir, m.config.VersionFilter, m.config.BuildType)
+					m.Settings.SetValues(m.config.DownloadDir, m.config.VersionFilter, m.config.BuildType, m.config.Theme)
 					return m, nil
 				case CmdFetchBuilds:
 					return m, m.commands.FetchBuilds()
@@ -180,6 +185,15 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m.handleOpenBuildDir()
 				case CmdDeleteBuild:
 					return m.handleDeleteBuild()
+				case CmdToggleDetail:
+					m.detailShown = !m.detailShown
+					m.computeLayout()
+					if m.detailShown && !m.layout.detailVisible {
+						return m, func() tea.Msg {
+							return statusMsg{text: "not enough space for the info panel"}
+						}
+					}
+					return m, nil
 				}
 			}
 		}

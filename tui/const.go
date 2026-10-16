@@ -4,15 +4,35 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 )
 
-// Constants for UI styling and configuration
+// Layout constants for the TUI chrome and panes.
 const (
-	// Color constants
-	textColor       = "255" // White for text
-	backgroundColor = "24"  // Gray background
-	highlightColor  = "12"  // Blue for highlights
-	orangeColor     = "208" // Orange for local builds
-	greenColor      = "46"  // Green for updated builds
-	redColor        = "196" // Red for failed downloads
+	// Minimum terminal size we can render a meaningful layout for.
+	minTermWidth  = 45
+	minTermHeight = 12
+
+	// Fixed vertical chrome heights (in lines).
+	headerBoxHeight = 3 // rounded box containing the logo/meta
+	footerHeight    = 2 // two lines of key hints
+
+	// Border frame sizes for a rounded box.
+	boxBorderFrameWidth  = 2
+	boxBorderFrameHeight = 2
+
+	// Horizontal padding applied inside the builds pane (one space each side).
+	panePadX = 1
+
+	// Gap (in columns) between the builds pane and the detail pane.
+	paneGap = 2
+
+	// Below this terminal width the detail pane is hidden and the builds table
+	// takes the full width.
+	minDetailWidth = 104
+	// Share of the terminal width given to the detail pane when visible.
+	detailRatio = 0.40
+
+	// Settings modal sizing.
+	settingsMaxWidth = 96
+	settingsMinWidth = 44
 )
 
 // View states
@@ -47,6 +67,7 @@ const (
 	CmdHome           // Add Home command
 	CmdEnd            // Add End command
 	CmdCleanOldBuilds // Add command for cleaning old builds
+	CmdToggleDetail   // Show/hide the build info panel
 )
 
 // KeyCommand defines a keyboard command with its key binding and description
@@ -80,6 +101,7 @@ var (
 		{Type: CmdPageDown, Keys: []string{"pgdown"}, Description: "Page down"},
 		{Type: CmdHome, Keys: []string{"home"}, Description: "Go to first item"},
 		{Type: CmdEnd, Keys: []string{"end"}, Description: "Go to last item"},
+		{Type: CmdToggleDetail, Keys: []string{"tab"}, Description: "Toggle build info panel"},
 	}
 
 	// Settings view commands
