@@ -41,6 +41,10 @@ const (
 	settingsMinListWidth      = 20
 	settingsMinDetailWidth    = 24
 	settingsColumnGap         = 3 // gap plus the vertical divider between panes
+
+	// Maximum completion candidates listed under the Download Directory row
+	// before the rest are summarised as "… +N more".
+	settingsMaxDirMatches = 6
 )
 
 // View states

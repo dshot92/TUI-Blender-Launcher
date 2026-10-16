@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	"TUI-Blender-Launcher/config"
@@ -49,6 +51,14 @@ type SettingsModel struct {
 	// editBackup holds the value an input had when editing began, so Esc can
 	// discard the edit and revert.
 	editBackup string
+
+	// Tab-completion state for the Download Directory field: the candidates
+	// offered by the current session, the value the session started from, and
+	// the index of the candidate currently shown (-1 while the value holds a
+	// shared prefix rather than a full match).
+	dirMatches      []string
+	dirCompleteBase string
+	dirMatchIdx     int
 }
 
 // SettingsValues is a snapshot of the settings a user can edit. Building it
@@ -82,7 +92,7 @@ func settingLabel(i int) string {
 func settingDescription(i int) string {
 	switch i {
 	case settingDownloadDir:
-		return "Folder where downloaded Blender builds are stored."
+		return "Folder where downloaded Blender builds are stored. Press Tab while editing to complete the path."
 	case settingVersionFilter:
 		return "Only show builds matching this version (e.g., 4.0, 3.6, or 5.x for all 5s). Defaults to 4.x. Leave empty to show all."
 	case settingBuildType:
@@ -109,6 +119,7 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 		ThemeOptions:       PaletteNames(),
 		FocusIndex:         settingDownloadDir,
 		EditMode:           false,
+		dirMatchIdx:        -1,
 	}
 
 	// Theme the inputs so they match the active palette instead of the bubbles
@@ -289,7 +300,42 @@ func (m SettingsModel) renderDetail(w int) string {
 	for _, dl := range wrapText(settingDescription(idx), contentW) {
 		lines = append(lines, descStyle.Padding(0, 1).Render(dl))
 	}
+
+	// While completing the download directory, list the candidate folders the
+	// current Tab session found so ambiguous matches are visible.
+	if idx == settingDownloadDir && m.EditMode {
+		lines = append(lines, m.renderDirMatches(contentW, labelStyle, valueStyle)...)
+	}
 	return strings.Join(lines, "\n")
+}
+
+// renderDirMatches renders the Tab-completion candidates as a short list,
+// highlighting the one currently shown. It returns nil when there is nothing
+// useful to show (fewer than two candidates).
+func (m SettingsModel) renderDirMatches(w int, labelStyle, valueStyle lp.Style) []string {
+	if len(m.dirMatches) < 2 {
+		return nil
+	}
+
+	p := m.Style.Palette
+	current := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+	muted := lp.NewStyle().Foreground(lp.Color(p.Muted))
+
+	out := []string{"", " " + labelStyle.Render("Matches")}
+	for i, match := range m.dirMatches {
+		if i >= settingsMaxDirMatches {
+			out = append(out, " "+muted.Render(fmt.Sprintf("… +%d more", len(m.dirMatches)-i)))
+			break
+		}
+		marker := "  "
+		style := valueStyle
+		if i == m.dirMatchIdx {
+			marker = "▸ "
+			style = current
+		}
+		out = append(out, " "+style.Render(truncate(marker+filepath.Base(match), w)))
+	}
+	return out
 }
 
 // detailValue renders the "Value: ..." line for the focused setting.
@@ -444,6 +490,9 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Route keystrokes to the focused text field while editing.
 		if m.EditMode && m.FocusIndex < len(m.Inputs) {
+			// Any edit invalidates the last completion session; Tab is handled
+			// above and returns before reaching here.
+			m.resetDirCompletion()
 			var cmd tea.Cmd
 			m.Inputs[m.FocusIndex], cmd = m.Inputs[m.FocusIndex].Update(msg)
 			return m, cmd
@@ -473,11 +522,13 @@ func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
 		// Commit the edit.
 		m.EditMode = false
 		m.editBackup = ""
+		m.resetDirCompletion()
 		m.updateFocusStyles()
 		return m, nil
 	}
 	// Begin editing: snapshot the value so Esc can revert it.
 	m.editBackup = m.Inputs[m.FocusIndex].Value()
+	m.resetDirCompletion()
 	m.EditMode = true
 	m.updateFocusStyles()
 	return m, nil
@@ -492,6 +543,7 @@ func (m *SettingsModel) cancelEdit() {
 	}
 	m.editBackup = ""
 	m.EditMode = false
+	m.resetDirCompletion()
 	m.updateFocusStyles()
 }
 
@@ -614,33 +666,98 @@ func (m *SettingsModel) updateInputWidths() {
 	}
 }
 
+// handleDirCompletion completes the Download Directory field against the
+// filesystem, in the spirit of a shell's Tab completion:
+//
+//   - a unique match is completed and given a trailing separator;
+//   - several matches extend the value to their longest shared prefix;
+//   - when no further extension is possible, repeated Tab presses cycle
+//     through the individual matches.
+//
+// The candidates are kept on the model so the detail pane can list them.
 func (m *SettingsModel) handleDirCompletion() (tea.Model, tea.Cmd) {
-	input := m.Inputs[0].Value()
-	matches, err := DirCompletions(input)
-	if err == nil && len(matches) > 0 {
-		if len(matches) == 1 {
-			m.Inputs[0].SetValue(matches[0] + "/")
-			m.Inputs[0].CursorEnd()
-		} else {
-			// Find common prefix
-			prefix := matches[0]
-			for _, mpath := range matches[1:] {
-				max := len(prefix)
-				if len(mpath) < max {
-					max = len(mpath)
-				}
-				for i := 0; i < max; i++ {
-					if prefix[i] != mpath[i] {
-						prefix = prefix[:i]
-						break
-					}
-				}
+	input := m.Inputs[settingDownloadDir].Value()
+
+	// Continue the current session while the field still holds its starting
+	// prefix or one of the candidates we last offered.
+	continuing := input == m.dirCompleteBase
+	if !continuing {
+		for _, match := range m.dirMatches {
+			if input == match || input == withTrailingSeparator(match) {
+				continuing = true
+				break
 			}
-			m.Inputs[0].SetValue(prefix)
-			m.Inputs[0].CursorEnd()
 		}
 	}
+	if !continuing {
+		m.dirCompleteBase = input
+		m.dirMatchIdx = -1
+		m.dirMatches = nil
+	}
+
+	matches, err := DirCompletions(m.dirCompleteBase)
+	if err != nil || len(matches) == 0 {
+		m.dirMatches = nil
+		m.dirMatchIdx = -1
+		return m, nil
+	}
+	m.dirMatches = matches
+
+	if len(matches) == 1 {
+		m.setDownloadDir(withTrailingSeparator(matches[0]))
+		m.dirMatchIdx = 0
+		return m, nil
+	}
+
+	if common := commonPathPrefix(matches); len(common) > len(m.dirCompleteBase) {
+		// Extend to the shared prefix; a following Tab starts cycling.
+		m.dirCompleteBase = common
+		m.setDownloadDir(common)
+		m.dirMatchIdx = -1
+		return m, nil
+	}
+
+	// No further extension is possible: cycle through the candidates.
+	m.dirMatchIdx = (m.dirMatchIdx + 1) % len(matches)
+	m.setDownloadDir(withTrailingSeparator(matches[m.dirMatchIdx]))
 	return m, nil
+}
+
+// setDownloadDir replaces the Download Directory input value and parks the
+// cursor at the end of the completed text.
+func (m *SettingsModel) setDownloadDir(value string) {
+	m.Inputs[settingDownloadDir].SetValue(value)
+	m.Inputs[settingDownloadDir].CursorEnd()
+}
+
+// resetDirCompletion forgets the current Tab-completion session.
+func (m *SettingsModel) resetDirCompletion() {
+	m.dirMatches = nil
+	m.dirCompleteBase = ""
+	m.dirMatchIdx = -1
+}
+
+// commonPathPrefix returns the longest prefix shared by every path in paths.
+func commonPathPrefix(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	prefix := paths[0]
+	for _, p := range paths[1:] {
+		max := len(prefix)
+		if len(p) < max {
+			max = len(p)
+		}
+		i := 0
+		for i < max && prefix[i] == p[i] {
+			i++
+		}
+		prefix = prefix[:i]
+		if prefix == "" {
+			return ""
+		}
+	}
+	return prefix
 }
 
 // GetValues returns a snapshot of the current settings.
@@ -677,6 +794,7 @@ func (m *SettingsModel) SetValues(v SettingsValues) {
 	m.editBackup = ""
 	m.releaseEditing = false
 	m.releaseBackup = nil
+	m.resetDirCompletion()
 	m.updateFocusStyles()
 }
 
