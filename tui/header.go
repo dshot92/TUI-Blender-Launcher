@@ -9,8 +9,9 @@ import (
 )
 
 // renderHeader renders the single-line top chrome: the gradient wordmark on the
-// left and live status metadata on the right, padded to the terminal width. It
-// always occupies exactly headerBoxHeight lines.
+// left and live status metadata (build count, active downloads, app version) on
+// the right, padded to the terminal width. It always occupies exactly
+// headerBoxHeight lines.
 func renderHeader(m *Model) string {
 	p := m.Style.Palette
 
@@ -30,7 +31,7 @@ func renderHeader(m *Model) string {
 		if active > 0 {
 			parts = append(parts, fmt.Sprintf("%d active", active))
 		}
-		parts = append(parts, capitalize(p.Name))
+		parts = append(parts, versionLabel())
 		meta = m.Style.Muted.Render(strings.Join(parts, "  ·  "))
 	}
 

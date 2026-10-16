@@ -24,19 +24,6 @@ func width(s string) int {
 	return ansi.StringWidth(s)
 }
 
-// capitalize upper-cases the first rune of s (ASCII only), leaving the rest
-// untouched. Used for presenting palette names.
-func capitalize(s string) string {
-	r := []rune(s)
-	if len(r) == 0 {
-		return s
-	}
-	if r[0] >= 'a' && r[0] <= 'z' {
-		r[0] -= 'a' - 'A'
-	}
-	return string(r)
-}
-
 // hardWrap breaks s into lines of at most max display columns, splitting
 // mid-token rather than on spaces (unlike wrapText). It is intended for
 // spaceless strings such as URLs, which wrapText would leave on a single

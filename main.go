@@ -54,6 +54,7 @@ func main() {
 	}
 
 	// Initialize the TUI model, passing the config and setup flag
+	tui.AppVersion = version
 	m := tui.InitialModel(cfg, needsInitialSetup)
 
 	// Create and run the Bubble Tea program
