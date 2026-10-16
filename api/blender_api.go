@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 )
 
 // API endpoint URLs for different build types
@@ -109,6 +110,16 @@ func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
 
 	releaseFilter := model.ParseReleaseTypes(opts.ReleaseTypes)
 
+	// Collect the API's checksum sidecars so kept archives can be verified after
+	// download. Sidecars are "<archiveURL>.sha256".
+	checksums := make(map[string]string)
+	for _, entry := range allBuildEntries {
+		archiveURL := strings.TrimSuffix(entry.DownloadURL, ".sha256")
+		if archiveURL != entry.DownloadURL {
+			checksums[archiveURL] = entry.DownloadURL
+		}
+	}
+
 	// --- Filtering Loop ---
 	var platformFilteredBuilds []model.BlenderBuild
 	for _, build := range allBuildEntries {
@@ -127,6 +138,9 @@ func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
 
 		// Passed all filters
 		build.Status = model.StateOnline
+		if url, ok := checksums[build.DownloadURL]; ok {
+			build.ChecksumURL = url
+		}
 		platformFilteredBuilds = append(platformFilteredBuilds, build)
 	}
 

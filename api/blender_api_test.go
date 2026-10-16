@@ -73,11 +73,11 @@ func TestFetchBuilds(t *testing.T) {
 				"branch": "main",
 				"hash": "jkl012",
 				"file_mtime": 1633046100,
-				"url": "https://example.com/blender-4.0.0-linux-x86_64.sha256",
+				"url": "https://example.com/blender-4.0.0-linux-x86_64.tar.xz.sha256",
 				"platform": "linux",
 				"architecture": "x86_64",
 				"file_size": 123,
-				"file_name": "blender-4.0.0-linux-x86_64.sha256",
+				"file_name": "blender-4.0.0-linux-x86_64.tar.xz.sha256",
 				"file_extension": "sha256",
 				"release_cycle": "candidate"
 			}
@@ -125,6 +125,10 @@ func TestFetchBuilds(t *testing.T) {
 				}
 				if build.Status != model.StateOnline {
 					t.Errorf("Expected status Online, got %s", build.Status)
+				}
+				wantChecksum := "https://example.com/blender-4.0.0-linux-x86_64.tar.xz.sha256"
+				if build.ChecksumURL != wantChecksum {
+					t.Errorf("ChecksumURL = %q, want %q", build.ChecksumURL, wantChecksum)
 				}
 			},
 		},

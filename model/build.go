@@ -108,6 +108,11 @@ type BlenderBuild struct {
 	// Internal state (not from API)
 	Status BuildState // Changed from types.BuildState to BuildState
 	// Selected field removed - we only work with highlighted builds now
+
+	// ChecksumURL points at the API's .sha256 sidecar for DownloadURL when the
+	// API provides one. Populated by the api package; empty means the download
+	// is not verifiable.
+	ChecksumURL string `json:"-"`
 }
 
 // ID returns a stable identifier for the build: its version, optionally

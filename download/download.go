@@ -6,6 +6,8 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,6 +130,96 @@ func (r *CancelableReader) Read(p []byte) (n int, err error) {
 	default:
 		return r.Reader.Read(p)
 	}
+}
+
+// checksumHTTPTimeout bounds fetching a small .sha256 sidecar.
+const checksumHTTPTimeout = 30 * time.Second
+
+// fetchExpectedChecksum downloads a .sha256 sidecar and returns the hex digest
+// it contains (the first whitespace-delimited field). It returns ErrCancelled if
+// cancellation is requested while the request is in flight.
+func fetchExpectedChecksum(checksumURL string, cancelCh <-chan struct{}) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "TUI-Blender-Launcher")
+
+	client := &http.Client{Timeout: checksumHTTPTimeout}
+
+	// Run the request in the background so a cancel can return promptly.
+	done := make(chan struct{})
+	var resp *http.Response
+	var doErr error
+	go func() {
+		resp, doErr = client.Do(req)
+		close(done)
+	}()
+
+	select {
+	case <-cancelCh:
+		return "", ErrCancelled
+	case <-done:
+	}
+
+	if doErr != nil {
+		return "", doErr
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	// A checksum file is tiny; cap the read defensively.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	return fields[0], nil
+}
+
+// fileSHA256 returns the hex SHA-256 digest of a file, honoring cancellation.
+func fileSHA256(path string, cancelCh <-chan struct{}) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, &CancelableReader{Reader: f, CancelCh: cancelCh}); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifyChecksum fetches the expected SHA-256 for archivePath from checksumURL
+// and compares it to the archive's actual digest. It returns (false, nil) when
+// the sidecar cannot be fetched, so a good download is not failed merely because
+// no checksum is available; an error is returned on mismatch, a hashing failure,
+// or cancellation.
+func verifyChecksum(archivePath, checksumURL string, cancelCh <-chan struct{}) (bool, error) {
+	expected, err := fetchExpectedChecksum(checksumURL, cancelCh)
+	if err != nil {
+		if errors.Is(err, ErrCancelled) {
+			return false, err
+		}
+		// Unavailable checksum: skip verification rather than fail the download.
+		return false, nil
+	}
+
+	actual, err := fileSHA256(archivePath, cancelCh)
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(expected, actual) {
+		return false, fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return true, nil
 }
 
 // extractTarXz extracts a .tar.xz archive with progress updates.
@@ -737,6 +829,17 @@ func DownloadAndExtractBuild(
 		return "", ErrCancelled
 	default:
 		// Continue
+	}
+
+	// 1b. Verify the archive against the API checksum when one is available.
+	// A mismatch aborts the download; an unavailable checksum is skipped.
+	if build.ChecksumURL != "" {
+		if _, err := verifyChecksum(downloadPath, build.ChecksumURL, cancelCh); err != nil {
+			if errors.Is(err, ErrCancelled) {
+				return "", ErrCancelled
+			}
+			return "", fmt.Errorf("checksum verification failed: %w", err)
+		}
 	}
 
 	// 2. The archive contains a root directory, we'll extract directly to downloadBaseDir
