@@ -34,16 +34,20 @@ func NewDownloadManager(cfg config.Config) *DownloadManager {
 	}
 }
 
-// GetState safely retrieves state for a build
+// GetState safely retrieves a snapshot of state for a build
 func (dm *DownloadManager) GetState(buildID string) *model.DownloadState {
-	return dm.states[buildID]
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	return dm.states[buildID].Clone()
 }
 
-// GetAllStates returns a copy of all download states
+// GetAllStates returns a snapshot copy of all download states
 func (dm *DownloadManager) GetAllStates() map[string]*model.DownloadState {
-	result := make(map[string]*model.DownloadState)
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	result := make(map[string]*model.DownloadState, len(dm.states))
 	for k, v := range dm.states {
-		result[k] = v
+		result[k] = v.Clone()
 	}
 	return result
 }
@@ -347,10 +351,31 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	return nil
 }
 
-// CancelDownload stops an in-progress download
+// PruneInactiveStates removes terminal (failed/cancelled) download states,
+// keeping only those that are actively downloading or extracting.
+func (dm *DownloadManager) PruneInactiveStates() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	newStates := make(map[string]*model.DownloadState, len(dm.states))
+	for id, state := range dm.states {
+		if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+			newStates[id] = state
+		}
+	}
+	dm.states = newStates
+}
+
+// CancelDownload stops an in-progress download. Safe to call multiple times.
 func (dm *DownloadManager) CancelDownload(buildID string) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
 	state := dm.states[buildID]
 	if state == nil {
+		return
+	}
+	// Guard against a double close of the cancel channel.
+	if state.BuildState == model.StateCancelled {
 		return
 	}
 
@@ -379,17 +404,8 @@ func NewCommands(cfg config.Config) *Commands {
 // FetchBuilds fetches the list of builds from the API.
 func (c *Commands) FetchBuilds() tea.Cmd {
 	return func() tea.Msg {
-		// Clean up download states, keeping only active ones
-		newStates := make(map[string]*model.DownloadState)
-		if c.downloads != nil && c.downloads.states != nil {
-			for id, state := range c.downloads.states {
-				// Only keep states that are actively in progress, discard terminal states like Failed/Cancelled.
-				if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
-					newStates[id] = state
-				}
-			}
-			c.downloads.states = newStates // Atomically replace the map
-		}
+		// Clean up download states, keeping only active ones.
+		c.downloads.PruneInactiveStates()
 
 		// Create API instance
 		a := api.NewAPI()

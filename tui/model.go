@@ -9,6 +9,7 @@ type Model struct {
 	config   config.Config
 	commands *Commands
 	err      error
+	status   string
 
 	// Layout
 	terminalWidth  int

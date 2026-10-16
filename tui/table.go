@@ -45,11 +45,9 @@ var (
 	}
 )
 
-// Render renders a single row with the given column configuration
-// Now takes a Style parameter for row styling
+// Render renders a single row with the given column configuration.
+// It takes a Style parameter for row styling.
 func (r Row) Render(columns []ColumnConfig, style Style) string {
-	var cells []string
-
 	// Special handling for downloads and extractions
 	isDownloading := r.Build.Status == model.StateDownloading && r.Status != nil
 	isExtracting := r.Build.Status == model.StateExtracting && r.Status != nil
@@ -58,47 +56,49 @@ func (r Row) Render(columns []ColumnConfig, style Style) string {
 	isFailed := r.Build.Status == model.StateFailed
 	isCancelled := r.Build.Status == model.StateCancelled // StateNone is "Cancelled"
 
-	// Handle special case for download/extract - we'll render empty cells for Type, Hash, Size, Build Date
-	// and only display content in Version, Status, and Branch columns
+	var rowString string
+
 	if isDownloading || isExtracting {
+		// Render the leading cells (Version, Status, Branch) individually and
+		// append a progress bar spanning the remaining columns. Building the
+		// bar cell-wise (rather than slicing rendered output by byte offset)
+		// avoids cutting through ANSI escape sequences.
+		var prefixCells []string
+		barWidth := 0
 		for _, col := range columns {
 			var cellContent string
-
 			switch col.Key {
 			case "Version":
 				cellContent = r.Build.Version
 			case "Status":
 				if isDownloading {
 					cellContent = model.StateDownloading.String()
-				} else if isExtracting {
+				} else {
 					cellContent = model.StateExtracting.String()
 				}
 			case "Branch":
-				// Show download speed in Branch column when downloading
+				// Show download speed / extraction percentage in the Branch column.
 				if isDownloading && r.Status.Speed > 0 {
-					// Format speed with fixed width and precision to prevent flickering
-					// Only show 1 decimal place with fixed width
 					speedMBps := r.Status.Speed / 1024 / 1024
 					if speedMBps < 100 {
-						// For speeds under 100 MB/s, show 1 decimal place with fixed width
 						cellContent = fmt.Sprintf("%6.1f MB/s", speedMBps)
 					} else {
-						// For very high speeds, don't show decimal places
 						cellContent = fmt.Sprintf("%6.0f MB/s", speedMBps)
 					}
 				} else if isExtracting {
-					// Show percentage in Branch column for extraction with consistent formatting
 					cellContent = fmt.Sprintf("%6.1f%%", r.Status.Progress*100)
 				}
-			case "Type", "Hash", "Size", "Build Date":
-				// These columns will be replaced by progress bar
-				cellContent = ""
+			default:
+				// Type, Hash, Size and Build Date are replaced by the bar.
+				barWidth += col.Width
+				continue
 			}
-
-			cells = append(cells, col.Style(cellContent))
+			prefixCells = append(prefixCells, col.Style(cellContent))
 		}
+		rowString = lp.JoinHorizontal(lp.Left, prefixCells...) + renderProgressBar(r.Status.Progress, barWidth)
 	} else {
 		// Normal rendering for non-downloading builds
+		cells := make([]string, 0, len(columns))
 		for _, col := range columns {
 			var cellContent string
 			switch col.Key {
@@ -119,101 +119,66 @@ func (r Row) Render(columns []ColumnConfig, style Style) string {
 			}
 			cells = append(cells, col.Style(cellContent))
 		}
+		rowString = lp.JoinHorizontal(lp.Left, cells...)
 	}
 
-	// Join cells horizontally for the row
-	rowString := lp.JoinHorizontal(lp.Left, cells...)
-
-	// Apply a progress bar for downloading/extracting across Type to Build Date columns
-	if (isDownloading || isExtracting) && r.Status != nil {
-		// Find the beginning of the Type column
-		typeColIndex := -1
-		typePosition := 0
-
-		// Calculate the position of where to insert the progress bar
-		for i, col := range columns {
-			if i < 3 { // Version, Status, Branch columns
-				typePosition += col.Width
-			}
-			if col.Key == "Type" {
-				typeColIndex = i
-				break
-			}
-		}
-
-		if typeColIndex >= 0 {
-			// Calculate progress bar width - rest of the columns
-			progressBarWidth := 0
-			for i := typeColIndex; i < len(columns); i++ {
-				progressBarWidth += columns[i].Width
-			}
-
-			// Create a progress bar
-			progress := r.Status.Progress
-			if progress < 0 {
-				progress = 0
-			}
-			if progress > 1 {
-				progress = 1
-			}
-
-			// Create progress bar visual
-			completedWidth := int(float64(progressBarWidth) * progress)
-			if completedWidth > progressBarWidth {
-				completedWidth = progressBarWidth
-			}
-
-			remainingWidth := progressBarWidth - completedWidth
-
-			// Create the progress bar with orange color for the completed portion
-			progressBar := ""
-			if completedWidth > 0 {
-				progressBar += lp.NewStyle().
-					Background(lp.Color(highlightColor)).
-					Foreground(lp.Color(textColor)).
-					Width(completedWidth).
-					Render("")
-			}
-
-			if remainingWidth > 0 {
-				progressBar += lp.NewStyle().
-					Background(lp.Color(backgroundColor)).
-					Width(remainingWidth).
-					Render("")
-			}
-
-			// Create a new row string with the progress bar inserted at the Type column
-			if typePosition < len(rowString) {
-				// Replace from Type column onward with progress bar
-				rowString = rowString[:typePosition] + progressBar
-			}
-		}
-	}
-
-	// Apply appropriate style consistently across the entire row
-	if r.IsSelected {
-		// Use style.SelectedRow and style.RegularRow instead of global variables
-		return style.SelectedRow.Width(sumColumnWidths(columns)).Render(rowString)
-	}
-	if isFailed || isCancelled {
+	// Apply a consistent style across the entire row
+	totalWidth := sumColumnWidths(columns)
+	switch {
+	case r.IsSelected:
+		return style.SelectedRow.Width(totalWidth).Render(rowString)
+	case isFailed || isCancelled:
 		return lp.NewStyle().
 			Foreground(lp.Color(redColor)).
-			Width(sumColumnWidths(columns)).
+			Width(totalWidth).
 			Render(rowString)
-	}
-	if isOnline {
+	case isOnline:
 		return lp.NewStyle().
 			Foreground(lp.Color(orangeColor)).
-			Width(sumColumnWidths(columns)).
+			Width(totalWidth).
 			Render(rowString)
-	}
-	if isUpdate {
+	case isUpdate:
 		return lp.NewStyle().
 			Foreground(lp.Color(greenColor)).
-			Width(sumColumnWidths(columns)).
+			Width(totalWidth).
 			Render(rowString)
+	default:
+		return style.RegularRow.Width(totalWidth).Render(rowString)
 	}
-	return style.RegularRow.Width(sumColumnWidths(columns)).Render(rowString)
+}
+
+// renderProgressBar renders a progress bar occupying the given display width.
+func renderProgressBar(progress float64, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if progress < 0 {
+		progress = 0
+	} else if progress > 1 {
+		progress = 1
+	}
+
+	completedWidth := int(float64(width) * progress)
+	if completedWidth > width {
+		completedWidth = width
+	}
+	remainingWidth := width - completedWidth
+
+	bar := ""
+	if completedWidth > 0 {
+		bar += lp.NewStyle().
+			Background(lp.Color(highlightColor)).
+			Foreground(lp.Color(textColor)).
+			Width(completedWidth).
+			Render("")
+	}
+	if remainingWidth > 0 {
+		bar += lp.NewStyle().
+			Background(lp.Color(backgroundColor)).
+			Width(remainingWidth).
+			Render("")
+	}
+	return bar
 }
 
 // Helper function to calculate the sum of all column widths
@@ -234,7 +199,7 @@ type ColumnConfig struct {
 	Style func(string) string
 }
 
-// Updated GetBuildColumns to accept terminalWidth and compute widths
+// GetBuildColumns builds the column layout for the given terminal width.
 func GetBuildColumns(terminalWidth int) []ColumnConfig {
 	var cellStyleCenter = lp.NewStyle().Align(lp.Center)
 	columns := []ColumnConfig{
@@ -265,7 +230,7 @@ func GetBuildColumns(terminalWidth int) []ColumnConfig {
 	return columns
 }
 
-// Update RenderRows to pass terminalWidth and respect visibleRowsCount
+// RenderRows builds the visible rows for the current model state.
 func RenderRows(m *Model, visibleRowsCount int) string {
 	var output strings.Builder
 	newlineStyle := lp.NewStyle().Render("\n")
@@ -305,8 +270,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 			if state, exists := m.Progress.DownloadStates[buildID]; exists {
 				downloadState = state
 
-				// Always update last render state for downloads - but don't check for changes
-				// to avoid skipping download renderings
+				// Update last render state for downloads
 				m.List.LastRenderState[buildID] = state.Progress
 			}
 		} else {
@@ -317,11 +281,9 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		}
 
 		// Always render downloading/extracting rows, never skip them
-		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.List.Cursor, downloadState)
 		rowText := row.Render(columns, m.Style)
 
-		// Ensure each row has proper width
 		output.WriteString(rowText)
 		if i < endIndex-1 {
 			output.WriteString(newlineStyle)
@@ -338,7 +300,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 	return output.String()
 }
 
-// Update renderBuildContent to pass terminalWidth and handle scrolling
+// renderBuildContent renders the builds table (header + rows) for the list view.
 func (m *Model) renderBuildContent(availableHeight int) string {
 	var output strings.Builder
 	newlineStyle := lp.NewStyle().Render("\n")
@@ -404,5 +366,3 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 
 	return finalOutput
 }
-
-// function updateSortColumn is removed

@@ -35,6 +35,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		m.status = ""
+		return m, nil
+
+	case error:
+		// Raw errors (e.g. from local.LaunchBlenderCmd / OpenDirCmd) would
+		// otherwise fall through and be silently dropped.
+		m.err = msg
+		m.status = ""
+		return m, nil
+
+	case statusMsg:
+		m.status = msg.text
+		m.err = nil
 		return m, nil
 
 	case progress.FrameMsg:
@@ -95,9 +108,9 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 							return errMsg{err}
 						}
 						if count == 0 {
-							return errMsg{fmt.Errorf("no old builds to clean")}
+							return statusMsg{text: "no old builds to clean"}
 						}
-						return errMsg{fmt.Errorf("successfully cleaned %d old build(s)", count)}
+						return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
 					}
 				}
 			}

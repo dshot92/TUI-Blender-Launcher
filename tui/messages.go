@@ -37,6 +37,9 @@ type (
 	// Error message
 	errMsg struct{ err error }
 
+	// Transient success/status message
+	statusMsg struct{ text string }
+
 	// Timer message
 	tickMsg time.Time
 

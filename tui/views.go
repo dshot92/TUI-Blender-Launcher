@@ -12,6 +12,17 @@ func (m *Model) renderPageForView() string {
 	// Fixed items: header, footer, 2 separator lines
 	fixedHeightItems := headerHeight + footerHeight + 2
 
+	// Optional status/error line shown just above the footer
+	statusLine := ""
+	if m.err != nil {
+		statusLine = m.Style.Error.Render("! " + m.err.Error())
+	} else if m.status != "" {
+		statusLine = m.Style.Status.Render(m.status)
+	}
+	if statusLine != "" {
+		fixedHeightItems++
+	}
+
 	// Calculate content height
 	contentHeight := m.terminalHeight - fixedHeightItems
 	if contentHeight < 1 {
@@ -60,6 +71,10 @@ func (m *Model) renderPageForView() string {
 	view.WriteString(content)
 	view.WriteString(padding)
 	view.WriteString(newlineStyle)
+	if statusLine != "" {
+		view.WriteString(statusLine)
+		view.WriteString(newlineStyle)
+	}
 	view.WriteString(separator)
 	view.WriteString(newlineStyle)
 	view.WriteString(footer)

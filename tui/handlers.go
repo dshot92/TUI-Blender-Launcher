@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	gv "github.com/hashicorp/go-version"
 )
 
 // Helper to check key matches
@@ -91,8 +92,13 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 		selectedBuild.Status == model.StateFailed ||
 		selectedBuild.Status == model.StateCancelled { // StateNone == Cancelled
 
+		buildID := selectedBuild.Version
+		if selectedBuild.Hash != "" {
+			buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
+		}
+
 		return m, func() tea.Msg {
-			return startDownloadMsg{build: *selectedBuild}
+			return startDownloadMsg{build: *selectedBuild, buildID: buildID}
 		}
 	}
 	return m, nil
@@ -313,9 +319,16 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	return m, m.commands.UpdateBuildStatus(m.List.Builds)
 }
 
-// applyVersionFilter filters builds by version
+// applyVersionFilter filters builds by version using semantic version
+// comparison (so e.g. "4.10" is correctly treated as newer than "4.9").
 func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderBuild {
 	if m.config.VersionFilter == "" {
+		return builds
+	}
+
+	minVersion, err := gv.NewVersion(m.config.VersionFilter)
+	if err != nil {
+		// Invalid filter: don't filter anything rather than hide all builds.
 		return builds
 	}
 
@@ -328,7 +341,11 @@ func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderB
 		}
 
 		// Compare versions
-		if build.Version >= m.config.VersionFilter {
+		buildVersion, err := gv.NewVersion(build.Version)
+		if err != nil {
+			continue
+		}
+		if !buildVersion.LessThan(minVersion) {
 			filtered = append(filtered, build)
 		}
 	}

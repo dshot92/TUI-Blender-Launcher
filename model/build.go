@@ -135,6 +135,17 @@ type DownloadState struct {
 	CancelCh    chan struct{} // Per-download cancel channel
 }
 
+// Clone returns a shallow copy of the download state. Callers that read
+// state outside the owning manager's lock should use this to avoid data
+// races with the download goroutine mutating the shared instance.
+func (s *DownloadState) Clone() *DownloadState {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	return &c
+}
+
 // FormatByteSize converts bytes to human-readable sizes
 func FormatByteSize(bytes int64) string {
 	const unit = 1024

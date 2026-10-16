@@ -60,11 +60,14 @@ func (m *ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// SyncDownloadStates updates the local download states from the source
+// SyncDownloadStates replaces the local download state snapshot with the
+// source of truth. Replacing (instead of merging) prevents states for
+// finished/removed downloads from accumulating indefinitely.
 func (m *ProgressModel) SyncDownloadStates(states map[string]*model.DownloadState) {
-	for id, state := range states {
-		m.DownloadStates[id] = state
+	if states == nil {
+		states = make(map[string]*model.DownloadState)
 	}
+	m.DownloadStates = states
 }
 
 // GetActiveDownloadProgress returns the progress of the active download or 0

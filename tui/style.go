@@ -15,6 +15,8 @@ type Style struct {
 	Separator          lp.Style
 	Newline            lp.Style
 	Footer             lp.Style
+	Error              lp.Style
+	Status             lp.Style
 }
 
 // NewStyle constructs the default UI style palette.
@@ -56,5 +58,12 @@ func NewStyle() Style {
 
 		Footer: lp.NewStyle().
 			Foreground(baseText),
+
+		Error: lp.NewStyle().
+			Foreground(lp.Color(redColor)).
+			Bold(true),
+
+		Status: lp.NewStyle().
+			Foreground(lp.Color(greenColor)),
 	}
 }
