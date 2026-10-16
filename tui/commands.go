@@ -136,7 +136,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			})
 		}
 
-		extractedPath, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, downloadCb, extractCb, cancelCh)
+		_, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, downloadCb, extractCb, cancelCh)
 
 		// Final state transition.
 		dm.mu.Lock()
@@ -160,9 +160,8 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		dm.mu.Unlock()
 
 		programCh <- downloadCompleteMsg{
-			buildVersion:  build.Version,
-			extractedPath: extractedPath,
-			err:           err,
+			buildVersion: build.Version,
+			err:          err,
 		}
 	}()
 
@@ -353,13 +352,5 @@ var programCh = make(chan tea.Msg)
 func (c *Commands) ProgramMsgListener() tea.Cmd {
 	return func() tea.Msg {
 		return <-programCh
-	}
-}
-
-// UIRefresh creates a command that forces a UI refresh
-func (c *Commands) UIRefresh() tea.Cmd {
-	return func() tea.Msg {
-		time.Sleep(time.Millisecond * 200)
-		return forceRenderMsg{}
 	}
 }

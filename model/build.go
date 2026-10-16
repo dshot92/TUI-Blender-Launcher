@@ -123,12 +123,6 @@ func (b BlenderBuild) ID() string {
 	return b.Version + "-" + h
 }
 
-// BlenderLaunchedMsg is sent when Blender is successfully launched
-// This allows the UI to handle launched state appropriately
-type BlenderLaunchedMsg struct {
-	Version string // The version of Blender that was launched
-}
-
 // BlenderExecMsg is sent when Blender should be executed directly
 // This will cause the TUI to exit and exec Blender in its place
 type BlenderExecMsg struct {

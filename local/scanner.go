@@ -69,34 +69,6 @@ func ScanLocalBuilds(downloadDir string) ([]model.BlenderBuild, error) {
 	return localBuilds, nil
 }
 
-// BuildLocalLookupMap creates a map of available local build versions.
-func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
-	lookupMap := make(map[string]bool)
-	entries, err := os.ReadDir(downloadDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return lookupMap, nil
-		}
-		return nil, fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != download.OldBuildsDir {
-			dirPath := filepath.Join(downloadDir, entry.Name())
-			buildInfo, err := ReadBuildInfo(dirPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error processing directory %s: %v\n", dirPath, err)
-				continue
-			}
-			if buildInfo != nil {
-				lookupMap[buildInfo.Version] = true
-			}
-		}
-	}
-
-	return lookupMap, nil
-}
-
 // FindBuild returns the first local build matching the predicate, along with
 // its directory path. Returns (nil, "", nil) when nothing matches.
 func FindBuild(downloadDir string, match func(model.BlenderBuild) bool) (*model.BlenderBuild, string, error) {
@@ -167,40 +139,6 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 	}
 }
 
-// OpenDownloadDirCmd creates a command to open the download directory.
-func OpenDownloadDirCmd(downloadDir string) tea.Cmd {
-	return func() tea.Msg {
-		if _, err := os.Stat(downloadDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(downloadDir, 0755); err != nil {
-				return fmt.Errorf("failed to create directory %s: %w", downloadDir, err)
-			}
-		}
-
-		if err := openFileExplorer(downloadDir); err != nil {
-			return fmt.Errorf("failed to open directory: %w", err)
-		}
-
-		return nil
-	}
-}
-
-// OpenDirCmd creates a command to open any directory.
-func OpenDirCmd(dir string) tea.Cmd {
-	return func() tea.Msg {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return fmt.Errorf("failed to create directory %s: %w", dir, err)
-			}
-		}
-
-		if err := openFileExplorer(dir); err != nil {
-			return fmt.Errorf("failed to open directory: %w", err)
-		}
-
-		return nil
-	}
-}
-
 // findBlenderExecutable locates the Blender executable in the installation directory.
 func findBlenderExecutable(installDir string) string {
 	var candidate string
@@ -243,11 +181,6 @@ func OpenFileExplorer(dir string) error {
 	detachProcess(cmd)
 
 	return cmd.Start()
-}
-
-// openFileExplorer is a simple wrapper for OpenFileExplorer.
-func openFileExplorer(dir string) error {
-	return OpenFileExplorer(dir)
 }
 
 // CleanOldBuilds removes all builds from the .oldbuilds directory.

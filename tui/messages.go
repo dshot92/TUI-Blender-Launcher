@@ -27,9 +27,8 @@ type (
 		buildID string // Added unique build identifier
 	}
 	downloadCompleteMsg struct { // Download & extraction finished
-		buildVersion  string // Version of the build that finished
-		extractedPath string
-		err           error
+		buildVersion string // Version of the build that finished
+		err          error
 	}
 	buildDeletedMsg struct { // Build was deleted from disk
 		hash string
@@ -42,7 +41,4 @@ type (
 
 	// Timer message
 	tickMsg time.Time
-
-	// UI refresh message
-	forceRenderMsg struct{} // Message used just to force UI rendering
 )

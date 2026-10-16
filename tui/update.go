@@ -38,8 +38,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case error:
-		// Raw errors (e.g. from local.LaunchBlenderCmd / OpenDirCmd) would
-		// otherwise fall through and be silently dropped.
+		// Raw errors (e.g. from local.LaunchBlenderCmd) would otherwise fall
+		// through and be silently dropped.
 		m.err = msg
 		m.status = ""
 		return m, nil

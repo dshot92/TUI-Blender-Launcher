@@ -42,7 +42,6 @@ const (
 	CmdMoveRight
 	CmdSaveSettings
 	CmdToggleEditMode
-	CmdCancelDownload
 	CmdPageUp         // Add PageUp command
 	CmdPageDown       // Add PageDown command
 	CmdHome           // Add Home command
