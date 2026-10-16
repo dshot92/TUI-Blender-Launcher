@@ -391,13 +391,7 @@ func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case CmdShowSettings:
 		m.currentView = viewSettings
-		m.Settings.SetValues(SettingsValues{
-			DownloadDir:   m.config.DownloadDir,
-			VersionFilter: m.config.VersionFilter,
-			BuildType:     m.config.BuildType,
-			ReleaseTypes:  m.config.ReleaseTypes,
-			Theme:         m.config.Theme,
-		})
+		m.Settings.SetValues(SettingsValuesFromConfig(m.config))
 		m.settingsSaved = m.Settings.GetValues()
 		return m, nil
 	case CmdFetchBuilds:
@@ -425,33 +419,44 @@ func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 		m.List.EnsureCursorVisible()
 		return m, nil
 	case CmdCleanOldBuilds:
-		return m, func() tea.Msg {
-			count, err := local.CleanOldBuilds(m.config.DownloadDir)
-			if err != nil {
-				return errMsg{err}
-			}
-			if count == 0 {
-				return statusMsg{text: "no old builds to clean"}
-			}
-			return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
-		}
+		return m, m.cleanOldBuildsCmd()
 	case CmdDeleteBuild:
 		build := m.List.GetSelectedBuild()
 		if build == nil {
 			return m, nil
 		}
-		downloading := m.isDownloading(*build)
-		if !downloading && build.Status != model.StateLocal && build.Status != model.StateUpdate {
+		if !m.isDownloading(*build) && build.Status != model.StateLocal && build.Status != model.StateUpdate {
 			return m, nil
 		}
-		m.deleteConfirm = true
-		m.deleteConfirmBuild = *build
-		m.deleteConfirmCancel = downloading
-		m.deleteConfirmChoice = confirmChoiceNo
+		m.beginDeleteConfirm(*build)
 		return m, nil
 	default:
 		return m, nil
 	}
+}
+
+// cleanOldBuildsCmd removes archived builds and reports the outcome as a toast.
+func (m *Model) cleanOldBuildsCmd() tea.Cmd {
+	return func() tea.Msg {
+		count, err := local.CleanOldBuilds(m.config.DownloadDir)
+		if err != nil {
+			return errMsg{err}
+		}
+		if count == 0 {
+			return statusMsg{text: "no old builds to clean"}
+		}
+		return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
+	}
+}
+
+// beginDeleteConfirm opens the delete/cancel confirmation popup for build,
+// defaulting to "No". The caller is responsible for checking that the build may
+// be acted on.
+func (m *Model) beginDeleteConfirm(build model.BlenderBuild) {
+	m.deleteConfirm = true
+	m.deleteConfirmBuild = build
+	m.deleteConfirmCancel = m.isDownloading(build)
+	m.deleteConfirmChoice = confirmChoiceNo
 }
 
 // isDownloading reports whether build is mid-transfer. The build's own status is
@@ -461,11 +466,9 @@ func (m *Model) isDownloading(build model.BlenderBuild) bool {
 	if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
 		return true
 	}
-	if m.commands != nil && m.commands.downloads != nil {
-		if state := m.commands.downloads.GetState(build.ID()); state != nil &&
-			(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
-			return true
-		}
+	if state := m.stateFor(build.ID()); state != nil &&
+		(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
+		return true
 	}
 	return false
 }
@@ -504,16 +507,7 @@ func (m *Model) executeSettingsCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 		if m.Settings.EditMode || m.Settings.releaseEditing {
 			return m, nil
 		}
-		return m, func() tea.Msg {
-			count, err := local.CleanOldBuilds(m.config.DownloadDir)
-			if err != nil {
-				return errMsg{err}
-			}
-			if count == 0 {
-				return statusMsg{text: "no old builds to clean"}
-			}
-			return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
-		}
+		return m, m.cleanOldBuildsCmd()
 	default:
 		return m, nil
 	}
@@ -646,12 +640,8 @@ func (m *Model) executeContextMenuItem() (tea.Model, tea.Cmd) {
 	case CmdOpenBuildDir:
 		return m.handleOpenBuildDir()
 	case CmdDeleteBuild:
-		build := m.List.GetSelectedBuild()
-		if build != nil {
-			m.deleteConfirmBuild = *build
-			m.deleteConfirm = true
-			m.deleteConfirmCancel = m.isDownloading(*build)
-			m.deleteConfirmChoice = confirmChoiceNo
+		if build := m.List.GetSelectedBuild(); build != nil {
+			m.beginDeleteConfirm(*build)
 		}
 		return m, nil
 	case CmdOpenURL:

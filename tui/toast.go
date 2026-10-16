@@ -60,9 +60,8 @@ func (m *Model) renderToast(maxWidth int) (string, bool) {
 	if inner < 1 {
 		inner = 1
 	}
-	// Truncate the (styled) text so it never widens the panel.
-	text = truncate(text, inner)
-	line := lp.NewStyle().Width(inner).Align(lp.Center).Render(text)
+	// Center the (styled) text; centered truncates, so it never widens the panel.
+	line := centered(inner, text)
 
 	return renderBox("", "", line, panelW, toastHeight, border), true
 }

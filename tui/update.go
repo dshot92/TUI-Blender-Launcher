@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"github.com/dshot92/TUI-Blender-Launcher/local"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"slices"
 	"strings"
@@ -222,16 +221,7 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 				}
 			case CmdCleanOldBuilds:
 				if !m.Settings.EditMode {
-					return m, func() tea.Msg {
-						count, err := local.CleanOldBuilds(m.config.DownloadDir)
-						if err != nil {
-							return errMsg{err}
-						}
-						if count == 0 {
-							return statusMsg{text: "no old builds to clean"}
-						}
-						return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
-					}
+					return m, m.cleanOldBuildsCmd()
 				}
 			}
 		}
@@ -464,13 +454,7 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				case CmdShowSettings:
 					m.currentView = viewSettings
-					m.Settings.SetValues(SettingsValues{
-						DownloadDir:   m.config.DownloadDir,
-						VersionFilter: m.config.VersionFilter,
-						BuildType:     m.config.BuildType,
-						ReleaseTypes:  m.config.ReleaseTypes,
-						Theme:         m.config.Theme,
-					})
+					m.Settings.SetValues(SettingsValuesFromConfig(m.config))
 					// Baseline for auto-save: nothing is written until an edit.
 					m.settingsSaved = m.Settings.GetValues()
 					return m, nil
@@ -487,32 +471,13 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if build == nil {
 						return m, nil
 					}
-					downloading := build.Status == model.StateDownloading || build.Status == model.StateExtracting
-					if !downloading && m.commands != nil && m.commands.downloads != nil {
-						if state := m.commands.downloads.GetState(build.ID()); state != nil &&
-							(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
-							downloading = true
-						}
-					}
-					if !downloading && build.Status != model.StateLocal && build.Status != model.StateUpdate {
+					if !m.isDownloading(*build) && build.Status != model.StateLocal && build.Status != model.StateUpdate {
 						return m, nil
 					}
-					m.deleteConfirm = true
-					m.deleteConfirmBuild = *build
-					m.deleteConfirmCancel = downloading
-					m.deleteConfirmChoice = confirmChoiceNo
+					m.beginDeleteConfirm(*build)
 					return m, nil
 				case CmdCleanOldBuilds:
-					return m, func() tea.Msg {
-						count, err := local.CleanOldBuilds(m.config.DownloadDir)
-						if err != nil {
-							return errMsg{err}
-						}
-						if count == 0 {
-							return statusMsg{text: "no old builds to clean"}
-						}
-						return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
-					}
+					return m, m.cleanOldBuildsCmd()
 				case CmdToggleDetail:
 					m.detailShown = !m.detailShown
 					m.computeLayout()

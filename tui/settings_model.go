@@ -69,6 +69,17 @@ type SettingsValues struct {
 	Theme         string
 }
 
+// SettingsValuesFromConfig snapshots the editable settings out of cfg.
+func SettingsValuesFromConfig(cfg config.Config) SettingsValues {
+	return SettingsValues{
+		DownloadDir:   cfg.DownloadDir,
+		VersionFilter: cfg.VersionFilter,
+		BuildType:     cfg.BuildType,
+		ReleaseTypes:  cfg.ReleaseTypes,
+		Theme:         cfg.Theme,
+	}
+}
+
 // settingLabel returns the display label for a settings row.
 func settingLabel(i int) string {
 	switch i {
@@ -362,6 +373,37 @@ func (m SettingsModel) renderOptions(options []string, current string, avail int
 	return s
 }
 
+// releaseChip markers: a two-cell checkbox prefix followed by the option label.
+const (
+	releaseChipOff = "▢ "
+	releaseChipOn  = "▣ "
+)
+
+// releaseChip is one rendered release-type option: its full label (marker plus
+// option text) and whether it is currently selected.
+type releaseChip struct {
+	label    string
+	selected bool
+}
+
+// releaseChips builds the ordered release-type chips for the current selection.
+func (m SettingsModel) releaseChips() []releaseChip {
+	selected := make(map[string]bool, len(m.ReleaseTypes))
+	for _, s := range m.ReleaseTypes {
+		selected[s] = true
+	}
+	chips := make([]releaseChip, len(m.ReleaseTypeOptions))
+	for i, opt := range m.ReleaseTypeOptions {
+		on := selected[opt]
+		mark := releaseChipOff
+		if on {
+			mark = releaseChipOn
+		}
+		chips[i] = releaseChip{label: mark + opt, selected: on}
+	}
+	return chips
+}
+
 // renderReleaseOptions renders the release-type multi-select as a row of
 // toggle chips. When the row is in toggle mode the cursor chip is underlined;
 // if the chips do not fit the available width a compact summary is shown.
@@ -373,23 +415,16 @@ func (m SettingsModel) renderReleaseOptions(avail int) string {
 	cursor := lp.NewStyle().Padding(0, 1).Bold(true).Underline(true).
 		Foreground(lp.Color(p.Accent))
 
-	selected := make(map[string]bool, len(m.ReleaseTypes))
-	for _, s := range m.ReleaseTypes {
-		selected[s] = true
-	}
-
 	var b strings.Builder
-	for i, opt := range m.ReleaseTypeOptions {
-		mark := "▢ "
+	for i, chip := range m.releaseChips() {
 		style := off
-		if selected[opt] {
-			mark = "▣ "
+		if chip.selected {
 			style = on
 		}
 		if m.releaseEditing && i == m.ReleaseCursor {
 			style = cursor
 		}
-		b.WriteString(style.Render(mark + opt))
+		b.WriteString(style.Render(chip.label))
 	}
 	s := b.String()
 	if width(s) > avail {
@@ -574,17 +609,9 @@ func optionAt(options []string, relX int) int {
 // releaseOptionAt is optionAt for the release-type chips, whose labels are
 // prefixed with a two-cell checkbox marker.
 func (m SettingsModel) releaseOptionAt(relX int) int {
-	selected := make(map[string]bool, len(m.ReleaseTypes))
-	for _, s := range m.ReleaseTypes {
-		selected[s] = true
-	}
 	cursor := 0
-	for i, opt := range m.ReleaseTypeOptions {
-		mark := "▢ "
-		if selected[opt] {
-			mark = "▣ "
-		}
-		w := width(mark+opt) + 2
+	for i, chip := range m.releaseChips() {
+		w := width(chip.label) + 2
 		if relX >= cursor && relX < cursor+w {
 			return i
 		}

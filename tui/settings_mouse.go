@@ -36,11 +36,6 @@ func (m *Model) settingsModalLayout() settingsLayout {
 		boxWidth = m.terminalWidth
 	}
 
-	innerW := boxWidth - boxBorderFrameWidth
-	if innerW < 1 {
-		innerW = 1
-	}
-
 	contentH := len(strings.Split(m.Settings.View(), "\n"))
 
 	// Box lines: one blank, the content, one blank and the help line.
@@ -52,14 +47,7 @@ func (m *Model) settingsModalLayout() settingsLayout {
 		boxHeight = minH
 	}
 
-	boxX := (m.terminalWidth - boxWidth) / 2
-	if boxX < 0 {
-		boxX = 0
-	}
-	boxY := (m.terminalHeight - boxHeight) / 2
-	if boxY < 0 {
-		boxY = 0
-	}
+	boxX, boxY, innerW := m.centeredOverlayFrame(boxWidth, boxHeight)
 
 	listW, detailW, twoCol := m.Settings.panes()
 

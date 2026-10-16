@@ -38,11 +38,14 @@ func (m *Model) renderPageForView() string {
 		return m.overlayToast(m.renderSettingsModalOverlay())
 	}
 
-	header := renderHeader(m)
-	body := m.renderBody()
-	footer := m.renderBuildFooter()
+	return m.overlayToast(m.baseFrame(renderHeader(m)))
+}
 
-	return m.overlayToast(strings.Join([]string{header, body, footer}, "\n"))
+// baseFrame joins the header, body and footer into the full list-view frame that
+// modal overlays are composited over. Callers that hide the wordmark (the
+// settings modal) pass a blank but width-correct header instead.
+func (m *Model) baseFrame(header string) string {
+	return strings.Join([]string{header, m.renderBody(), m.renderBuildFooter()}, "\n")
 }
 
 // renderBody lays out the builds pane and, when shown, the detail pane either
@@ -68,10 +71,7 @@ func (m *Model) renderSettingsModalOverlay() string {
 
 	// The settings modal replaces the header chrome, so leave a blank (but
 	// width-correct) top line instead of the wordmark.
-	header := lp.NewStyle().Width(m.terminalWidth).Render("")
-	body := m.renderBody()
-	footer := m.renderBuildFooter()
-	base := strings.Join([]string{header, body, footer}, "\n")
+	base := m.baseFrame(lp.NewStyle().Width(m.terminalWidth).Render(""))
 	title := " Settings "
 	if m.currentView == viewInitialSetup {
 		title = " Welcome — Initial Setup "
@@ -80,7 +80,7 @@ func (m *Model) renderSettingsModalOverlay() string {
 	content := m.Settings.View()
 
 	help := m.renderHints(m.settingsHints())
-	help = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(help, lay.innerW))
+	help = centered(lay.innerW, help)
 
 	// Build the box content. The status/error toast is layered over the bottom
 	// of the frame, not inside the box.
@@ -239,6 +239,25 @@ const (
 	confirmYesLabel = "[ Yes ]"
 )
 
+// centeredOverlayFrame computes the inner width and top-left origin for a
+// boxWidth x boxHeight modal centered in the terminal, clamping the origin so
+// the box stays on screen. Callers apply their own minimum-size rules first.
+func (m *Model) centeredOverlayFrame(boxWidth, boxHeight int) (x, y, innerW int) {
+	innerW = boxWidth - boxBorderFrameWidth
+	if innerW < 1 {
+		innerW = 1
+	}
+	x = (m.terminalWidth - boxWidth) / 2
+	if x < 0 {
+		x = 0
+	}
+	y = (m.terminalHeight - boxHeight) / 2
+	if y < 0 {
+		y = 0
+	}
+	return x, y, innerW
+}
+
 // deleteConfirmLayout computes the confirm modal geometry for the current
 // terminal size.
 func (m *Model) deleteConfirmLayout() deleteConfirmLayout {
@@ -253,21 +272,6 @@ func (m *Model) deleteConfirmLayout() deleteConfirmLayout {
 		boxWidth = minConfirmWidth
 	}
 
-	innerW := boxWidth - boxBorderFrameWidth
-	if innerW < 1 {
-		innerW = 1
-	}
-
-	buttons := confirmNoLabel + "   " + confirmYesLabel
-	btnsW := width(buttons)
-	if btnsW > innerW {
-		btnsW = innerW
-	}
-	pad := (innerW - btnsW) / 2
-	if pad < 0 {
-		pad = 0
-	}
-
 	// Box lines: blank, content, blank, buttons, blank, help.
 	boxHeight := 6 + boxBorderFrameHeight
 	if boxHeight > m.terminalHeight {
@@ -277,13 +281,16 @@ func (m *Model) deleteConfirmLayout() deleteConfirmLayout {
 		boxHeight = minH
 	}
 
-	boxX := (m.terminalWidth - boxWidth) / 2
-	if boxX < 0 {
-		boxX = 0
+	boxX, boxY, innerW := m.centeredOverlayFrame(boxWidth, boxHeight)
+
+	buttons := confirmNoLabel + "   " + confirmYesLabel
+	btnsW := width(buttons)
+	if btnsW > innerW {
+		btnsW = innerW
 	}
-	boxY := (m.terminalHeight - boxHeight) / 2
-	if boxY < 0 {
-		boxY = 0
+	pad := (innerW - btnsW) / 2
+	if pad < 0 {
+		pad = 0
 	}
 
 	startX := boxX + 1 + pad
@@ -327,13 +334,10 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 	m.computeLayout()
 	lay := m.deleteConfirmLayout()
 
-	header := renderHeader(m)
-	body := m.renderBody()
-	footer := m.renderBuildFooter()
-	base := strings.Join([]string{header, body, footer}, "\n")
+	base := m.baseFrame(renderHeader(m))
 
 	content := m.Style.HelpDesc.Render(text)
-	content = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(content, lay.innerW))
+	content = centered(lay.innerW, content)
 
 	// Two selectable choices, navigable with left/right (or h/l). No is on the
 	// left and is selected by default, so Yes must be chosen deliberately.
@@ -347,14 +351,14 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 	noBtn := noStyle.Render(confirmNoLabel)
 	yesBtn := yesStyle.Render(confirmYesLabel)
 	buttons := noBtn + "   " + yesBtn
-	buttons = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(buttons, lay.innerW))
+	buttons = centered(lay.innerW, buttons)
 
 	help := m.renderHints([]hint{
 		{key: "←/→", label: "choose"},
 		{key: "enter", label: "confirm"},
 		{key: "esc", label: "cancel"},
 	})
-	help = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(help, lay.innerW))
+	help = centered(lay.innerW, help)
 
 	lines := make([]string, 0, 8)
 	lines = append(lines, "")
@@ -377,10 +381,7 @@ func (m *Model) renderContextMenuOverlay() string {
 	p := m.Style.Palette
 	m.computeLayout()
 
-	header := renderHeader(m)
-	body := m.renderBody()
-	footer := m.renderBuildFooter()
-	base := strings.Join([]string{header, body, footer}, "\n")
+	base := m.baseFrame(renderHeader(m))
 
 	w, h := m.contextMenuSize()
 	ox, oy := m.contextMenuOrigin()

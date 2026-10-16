@@ -121,7 +121,7 @@ func GetBuildColumns(colWidth int, desired []int) []ColumnConfig {
 			Width: w,
 			Style: func(w int) func(string) string {
 				return func(s string) string {
-					return lp.NewStyle().Align(lp.Center).Width(w).Render(truncate(s, w))
+					return centered(w, s)
 				}
 			}(w),
 		}
@@ -379,9 +379,7 @@ func (m *Model) renderBuildsPane(boxWidth, height int) string {
 
 		var downloadState *model.DownloadState
 		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			if state, ok := m.Progress.DownloadStates[build.ID()]; ok {
-				downloadState = state
-			}
+			downloadState = m.stateFor(build.ID())
 		} else if m.commands != nil && m.commands.downloads != nil {
 			downloadState = m.commands.downloads.GetState(build.ID())
 		}
@@ -396,11 +394,11 @@ func (m *Model) renderBuildsPane(boxWidth, height int) string {
 // centerBlock horizontally centers each line of s and adds leading blank lines
 // so the content sits roughly in the middle of a height-tall block.
 func centerBlock(s string, w, h int) string {
-	centered := lp.NewStyle().Width(w).Align(lp.Center).Render(s)
-	lines := strings.Split(centered, "\n")
+	block := centered(w, s)
+	lines := strings.Split(block, "\n")
 	pad := (h - len(lines)) / 2
 	if pad <= 0 {
-		return centered
+		return block
 	}
 	blank := strings.Repeat(" ", w)
 	prefix := make([]string, 0, pad+len(lines))

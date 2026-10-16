@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	lp "github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -17,6 +18,12 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return ansi.Truncate(s, max, "…")
+}
+
+// centered renders s horizontally centered in a w-wide field, truncating it
+// first so it can never overflow the field.
+func centered(w int, s string) string {
+	return lp.NewStyle().Width(w).Align(lp.Center).Render(truncate(s, w))
 }
 
 // width returns the display width of a (possibly styled) string.

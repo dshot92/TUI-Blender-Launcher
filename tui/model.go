@@ -265,6 +265,19 @@ func (m *Model) SyncDownloadStates() {
 	m.Progress.SyncDownloadStates(states)
 }
 
+// stateFor returns the live download state for a build, preferring the UI's
+// snapshot (refreshed each tick) and falling back to the download manager when
+// the snapshot has nothing. It returns nil when no state is known.
+func (m *Model) stateFor(buildID string) *model.DownloadState {
+	if state, ok := m.Progress.DownloadStates[buildID]; ok {
+		return state
+	}
+	if m.commands != nil && m.commands.downloads != nil {
+		return m.commands.downloads.GetState(buildID)
+	}
+	return nil
+}
+
 // SaveSettings saves the current settings to the configuration file
 func (m *Model) SaveSettings() error {
 	// Update config values from settings inputs

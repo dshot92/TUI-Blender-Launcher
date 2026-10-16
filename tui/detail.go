@@ -88,12 +88,7 @@ func (m *Model) detailBlock(build model.BlenderBuild, w int) detailBlock {
 	}
 
 	// Live download information.
-	var state *model.DownloadState
-	if s, ok := m.Progress.DownloadStates[build.ID()]; ok {
-		state = s
-	} else if m.commands != nil && m.commands.downloads != nil {
-		state = m.commands.downloads.GetState(build.ID())
-	}
+	state := m.stateFor(build.ID())
 	if state != nil && (state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
 		lines = append(lines, "")
 		lines = append(lines, m.Style.Title.Render(strings.ToUpper(state.BuildState.String())))
