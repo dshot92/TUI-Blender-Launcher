@@ -38,6 +38,7 @@ type SettingsModel struct {
 	ReleaseTypeOptions []string
 	ReleaseCursor      int
 	releaseEditing     bool
+	releaseBackup      []string
 	Theme              string
 	ThemeOptions       []string
 	ThemeIndex         int
@@ -87,7 +88,7 @@ func settingDescription(i int) string {
 	case settingBuildType:
 		return "Blender channel fetched from the BuildBot: daily, experimental or patch."
 	case settingReleaseFilter:
-		return "Only show builds of the selected release types. Press enter to toggle, none selected shows all."
+		return "Only show builds of the selected release types. Space toggles, enter saves; none selected shows all."
 	case settingTheme:
 		return "Interface color palette. Applied immediately, saved on exit."
 	}
@@ -458,6 +459,7 @@ func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
 	// The release-type row opens its own multi-select mode.
 	if m.FocusIndex == settingReleaseFilter {
 		m.releaseEditing = true
+		m.releaseBackup = append([]string(nil), m.ReleaseTypes...)
 		if m.ReleaseCursor < 0 || m.ReleaseCursor >= len(m.ReleaseTypeOptions) {
 			m.ReleaseCursor = 0
 		}
@@ -518,17 +520,24 @@ func (m *SettingsModel) cycleOption(dir int) {
 }
 
 // handleReleaseKey handles keys while the release-type multi-select is active:
-// left/right (or h/l) move the cursor, space/enter toggle the focused chip and
-// esc leaves the mode.
+// left/right (or h/l) move the cursor, space toggles the focused chip, enter
+// saves the selection and esc discards it.
 func (m *SettingsModel) handleReleaseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
+		// Cancel: restore the selection from before toggling began.
+		m.ReleaseTypes = append([]string(nil), m.releaseBackup...)
+		m.releaseBackup = nil
+		m.releaseEditing = false
+	case tea.KeyEnter:
+		// Save: keep the selection and leave toggle mode.
+		m.releaseBackup = nil
 		m.releaseEditing = false
 	case tea.KeyLeft, tea.KeyUp:
 		m.moveReleaseCursor(-1)
 	case tea.KeyRight, tea.KeyDown:
 		m.moveReleaseCursor(1)
-	case tea.KeySpace, tea.KeyEnter:
+	case tea.KeySpace:
 		m.toggleRelease()
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
@@ -667,6 +676,7 @@ func (m *SettingsModel) SetValues(v SettingsValues) {
 	m.EditMode = false
 	m.editBackup = ""
 	m.releaseEditing = false
+	m.releaseBackup = nil
 	m.updateFocusStyles()
 }
 

@@ -101,9 +101,9 @@ func (m *Model) settingsHints() []hint {
 	// While toggling release types, advertise the toggle controls.
 	if m.Settings.releaseEditing {
 		return []hint{
-			{"←/→", "move"},
 			{"space", "toggle"},
-			{"esc", "done"},
+			{"enter", "save"},
+			{"esc", "cancel"},
 		}
 	}
 

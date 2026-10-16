@@ -41,13 +41,30 @@ func TestSettingsReleaseTypesToggle(t *testing.T) {
 		t.Fatalf("after untoggling alpha, selection = %q", got)
 	}
 
-	// Esc leaves toggle mode without changing focus.
+	// Enter saves the selection and leaves toggle mode.
+	s.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if s.releaseEditing {
+		t.Fatalf("Enter should save and leave the release toggle mode")
+	}
+	if got := strings.Join(s.ReleaseTypes, ","); got != "beta" {
+		t.Fatalf("Enter should keep the selection, got %q", got)
+	}
+	if s.FocusIndex != settingReleaseFilter {
+		t.Fatalf("focus moved unexpectedly to %d", s.FocusIndex)
+	}
+
+	// Esc cancels: changes made since entering are discarded.
+	s.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	s.Update(tea.KeyMsg{Type: tea.KeySpace}) // toggle alpha back on
+	if got := strings.Join(s.ReleaseTypes, ","); got != "alpha,beta" {
+		t.Fatalf("after re-toggling alpha, selection = %q", got)
+	}
 	s.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if s.releaseEditing {
 		t.Fatalf("Esc should leave the release toggle mode")
 	}
-	if s.FocusIndex != settingReleaseFilter {
-		t.Fatalf("focus moved unexpectedly to %d", s.FocusIndex)
+	if got := strings.Join(s.ReleaseTypes, ","); got != "beta" {
+		t.Fatalf("Esc should discard changes, got %q", got)
 	}
 }
 
