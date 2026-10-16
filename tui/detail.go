@@ -164,6 +164,80 @@ func (m *Model) urlAt(x, y int) (string, bool) {
 	return block.url, true
 }
 
+// buildIndexAt maps terminal coordinates to an index in List.Builds. It returns
+// -1 when (x, y) does not land on a rendered build row.
+func (m *Model) buildIndexAt(x, y int) int {
+	if len(m.List.Builds) == 0 {
+		return -1
+	}
+	if x < 0 || x >= m.layout.listBoxWidth {
+		return -1
+	}
+	if m.layout.listBoxWidth <= 0 || m.layout.listRows <= 0 {
+		return -1
+	}
+
+	firstDataY := headerBoxHeight + 2
+	if y < firstDataY {
+		return -1
+	}
+	offset := y - firstDataY
+	if offset >= m.layout.listRows {
+		return -1
+	}
+	idx := m.List.StartIndex + offset
+	if idx < 0 || idx >= len(m.List.Builds) {
+		return -1
+	}
+	return idx
+}
+
+// buildAt is the bool-returning form of buildIndexAt, mirroring urlAt.
+func (m *Model) buildAt(x, y int) (int, bool) {
+	idx := m.buildIndexAt(x, y)
+	if idx < 0 {
+		return -1, false
+	}
+	return idx, true
+}
+
+// columnIndexAt maps a click on the builds table header row to its column index.
+// It returns -1 when (x, y) is not on the header row or does not land on any
+// column.
+func (m *Model) columnIndexAt(x, y int) int {
+	if y != headerBoxHeight+1 {
+		return -1
+	}
+	cols := m.columnsLayout()
+	if len(cols) == 0 {
+		return -1
+	}
+	// The builds pane has a border, pane padding, and the selection gutter
+	// before the first column: 1 + panePadX + gutterWidth.
+	const columnStart = 1 + panePadX + gutterWidth
+	pos := x - columnStart
+	if pos < 0 {
+		return -1
+	}
+	running := 0
+	for i, c := range cols {
+		running += c.Width
+		if pos < running {
+			return i
+		}
+	}
+	return -1
+}
+
+// columnAt is the bool-returning form of columnIndexAt, mirroring buildAt.
+func (m *Model) columnAt(x, y int) (int, bool) {
+	idx := m.columnIndexAt(x, y)
+	if idx < 0 {
+		return -1, false
+	}
+	return idx, true
+}
+
 // orDash returns s, or a muted placeholder when empty.
 func orDash(s string) string {
 	if s == "" {

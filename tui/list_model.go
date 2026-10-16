@@ -175,8 +175,7 @@ func (m *ListModel) EnsureCursorVisible() {
 
 // UpdateSortColumn changes the sort column
 func (m *ListModel) UpdateSortColumn(direction string) {
-	// Total columns: Version, Status, Branch, Type, Hash, Size, Build Date
-	numColumns := 7
+	numColumns := len(buildColumnNames)
 
 	if direction == "left" {
 		m.SortColumn--
@@ -189,6 +188,23 @@ func (m *ListModel) UpdateSortColumn(direction string) {
 			m.SortColumn = 0
 		}
 	}
+}
+
+// SortByColumn selects column as the sort key. Clicking the column that is
+// already active flips the sort direction; switching to a different column
+// starts ascending. The cursor is kept visible after the reorder.
+func (m *ListModel) SortByColumn(column int) {
+	if column < 0 || column >= len(buildColumnNames) {
+		return
+	}
+	if column == m.SortColumn {
+		m.SortReversed = !m.SortReversed
+	} else {
+		m.SortColumn = column
+		m.SortReversed = false
+	}
+	m.SortBuilds()
+	m.EnsureCursorVisible()
 }
 
 // SortBuilds sorts the build list

@@ -14,6 +14,10 @@ import (
 // statusLifetime is how long a transient status message stays on screen.
 const statusLifetime = 5 * time.Second
 
+// doubleClickWindow is how quickly two clicks on the same build row must follow
+// each other to register as a double click.
+const doubleClickWindow = 400 * time.Millisecond
+
 // Init initializes the model
 func (m *Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
@@ -76,6 +80,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle tick messages at top level to maintain update chain even in settings
 		if _, ok := msg.(tickMsg); ok {
 			return m.handleTickMsg(msg.(tickMsg))
+		}
+
+		// Mouse events in the settings modal drive focus, option selection and
+		// the help-line hints directly; they never reach the list view.
+		if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+			if c, consumed := m.handleSettingsMouse(mouseMsg); consumed {
+				// Live-preview a palette chosen by clicking its chip.
+				if m.Settings.Theme != m.Style.Palette.Name {
+					m.setTheme(ResolvePalette(m.Settings.Theme))
+				}
+				m.syncVersionFilterFeedback()
+				m.autoSaveSettings()
+				return m, c
+			}
 		}
 
 		var newSettings tea.Model
@@ -203,6 +221,36 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 	return m, innerCmd
 }
 
+// registerBuildClick records a left click on a build row and reports whether it
+// forms a double click with the previous one (same row, nearby cell, and within
+// doubleClickWindow).
+func (m *Model) registerBuildClick(buildIdx, x, y int) bool {
+	now := time.Now()
+	double := buildIdx == m.lastClickBuild &&
+		!m.lastClickTime.IsZero() &&
+		now.Sub(m.lastClickTime) <= doubleClickWindow &&
+		absInt(x-m.lastClickX) <= 2 && absInt(y-m.lastClickY) <= 1
+	m.lastClickTime = now
+	m.lastClickBuild = buildIdx
+	m.lastClickX = x
+	m.lastClickY = y
+	return double
+}
+
+// resetClickTracking forgets any pending click so the next build click cannot be
+// mistaken for the second half of a double click.
+func (m *Model) resetClickTracking() {
+	m.lastClickTime = time.Time{}
+	m.lastClickBuild = -1
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // updateListViewController handles logic for list view (controller layer)
 func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -234,15 +282,107 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTickMsg(msg)
 
 	case tea.MouseMsg:
-		// A left click on the download-URL row of the info panel opens the link.
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		// Close the context menu on any click outside of it.
+		if m.contextMenuVisible && msg.Action == tea.MouseActionPress {
+			// If the click lands inside the menu, act on the chosen entry.
+			if idx := m.contextMenuItemAt(msg.X, msg.Y); idx >= 0 {
+				m.contextMenuChoice = idx
+				return m.executeContextMenuItem()
+			}
+			// A right click on another build re-opens the menu there.
+			if msg.Button == tea.MouseButtonRight {
+				if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+					m.List.Cursor = buildIdx
+					m.List.EnsureCursorVisible()
+					m.openContextMenu(buildIdx, msg.X, msg.Y)
+					return m, nil
+				}
+			}
+			m.closeContextMenu()
+		}
+
+		switch {
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+			// Footer command hints are clickable.
+			if cmd, ok := m.footerCommandAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
+				return m.executeFooterCommand(cmd)
+			}
+			// URL row in the info panel takes priority.
 			if url, ok := m.urlAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
 				return m, openURLCmd(url)
 			}
+			// Clicking a table header sorts by that column; clicking the
+			// active column again flips the direction.
+			if col, ok := m.columnAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
+				m.List.SortByColumn(col)
+				return m, nil
+			}
+			if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+				m.List.Cursor = buildIdx
+				m.List.EnsureCursorVisible()
+				m.closeContextMenu()
+				// A double click on a local build launches it.
+				if m.registerBuildClick(buildIdx, msg.X, msg.Y) {
+					if build := m.List.GetSelectedBuild(); build != nil && build.Status == model.StateLocal {
+						return m.handleLaunchBlender()
+					}
+				}
+			}
+
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight:
+			if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+				m.List.Cursor = buildIdx
+				m.List.EnsureCursorVisible()
+				m.openContextMenu(buildIdx, msg.X, msg.Y)
+			}
+
+		case msg.Button == tea.MouseButtonWheelUp:
+			m.List.UpdateCursor("up", m.List.GetVisibleRowsCount())
+		case msg.Button == tea.MouseButtonWheelDown:
+			m.List.UpdateCursor("down", m.List.GetVisibleRowsCount())
 		}
 		return m, nil
 
 	case tea.KeyMsg:
+		// A pending context menu captures keys until it is resolved/dismissed.
+		if m.contextMenuVisible {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.closeContextMenu()
+				return m, nil
+			case tea.KeyUp, tea.KeyShiftTab:
+				if m.contextMenuChoice > 0 {
+					m.contextMenuChoice--
+				}
+				return m, nil
+			case tea.KeyDown, tea.KeyTab:
+				if m.contextMenuChoice < len(m.contextMenuItems)-1 {
+					m.contextMenuChoice++
+				}
+				return m, nil
+			case tea.KeyEnter:
+				return m.executeContextMenuItem()
+			}
+			if msg.Type == tea.KeyRunes {
+				switch string(msg.Runes) {
+				case "k":
+					if m.contextMenuChoice > 0 {
+						m.contextMenuChoice--
+					}
+					return m, nil
+				case "j":
+					if m.contextMenuChoice < len(m.contextMenuItems)-1 {
+						m.contextMenuChoice++
+					}
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
 		// A pending delete/cancel confirmation captures all keys until it is
 		// resolved, so the destructive action is never performed accidentally.
 		if m.deleteConfirm {

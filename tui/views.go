@@ -21,6 +21,10 @@ func (m *Model) renderPageForView() string {
 		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, msg)
 	}
 
+	if m.contextMenuVisible {
+		return m.renderContextMenuOverlay()
+	}
+
 	if m.deleteConfirm {
 		return m.renderDeleteConfirmOverlay()
 	}
@@ -60,7 +64,11 @@ func (m *Model) renderBody() string {
 // remains visible.
 func (m *Model) renderSettingsModalOverlay() string {
 	p := m.Style.Palette
-	header := renderHeader(m)
+	lay := m.settingsModalLayout()
+
+	// The settings modal replaces the header chrome, so leave a blank (but
+	// width-correct) top line instead of the wordmark.
+	header := lp.NewStyle().Width(m.terminalWidth).Render("")
 	body := m.renderBody()
 	footer := m.renderBuildFooter()
 	base := strings.Join([]string{header, body, footer}, "\n")
@@ -69,59 +77,28 @@ func (m *Model) renderSettingsModalOverlay() string {
 		title = " Welcome — Initial Setup "
 	}
 
-	boxWidth := m.layout.settingsWidth
-	if boxWidth < settingsMinWidth {
-		boxWidth = settingsMinWidth
-	}
-	if boxWidth > m.terminalWidth {
-		boxWidth = m.terminalWidth
-	}
-
-	innerW := boxWidth - boxBorderFrameWidth
-	if innerW < 1 {
-		innerW = 1
-	}
-
 	content := m.Settings.View()
 
 	help := m.renderHints(m.settingsHints())
-	help = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(help, innerW))
+	help = lp.NewStyle().Width(lay.innerW).Align(lp.Center).Render(truncate(help, lay.innerW))
 
-	// Build the box content and size the modal to it, so it stays snug rather
-	// than leaving a large empty gap above the help line. The status/error toast
-	// is layered over the bottom of the frame, not inside the box.
+	// Build the box content. The status/error toast is layered over the bottom
+	// of the frame, not inside the box.
 	lines := make([]string, 0, 16)
 	lines = append(lines, "")
 	lines = append(lines, strings.Split(content, "\n")...)
 	lines = append(lines, "", help)
 
-	boxHeight := len(lines) + boxBorderFrameHeight
-	if boxHeight > m.terminalHeight {
-		boxHeight = m.terminalHeight
-	}
-	if minH := boxBorderFrameHeight + 2; boxHeight < minH {
-		boxHeight = minH
-	}
-
 	box := renderBox("",
 		m.Style.ActivePaneTitle.Render(title),
 		strings.Join(lines, "\n"),
-		boxWidth,
-		boxHeight,
+		lay.boxW,
+		lay.boxH,
 		lp.Color(p.Accent),
 	)
 
-	boxX := (m.terminalWidth - boxWidth) / 2
-	if boxX < 0 {
-		boxX = 0
-	}
-	boxY := (m.terminalHeight - boxHeight) / 2
-	if boxY < 0 {
-		boxY = 0
-	}
-
-	frame := overlayBlock(base, box, boxX, boxY, m.terminalWidth)
-	return m.overlayCompletionDropdown(frame, boxX, boxY, boxWidth, boxHeight)
+	frame := overlayBlock(base, box, lay.boxX, lay.boxY, m.terminalWidth)
+	return m.overlayCompletionDropdown(frame, lay.boxX, lay.boxY, lay.boxW, lay.boxH)
 }
 
 // overlayCompletionDropdown composites an IDE-style popup of the Download
@@ -295,9 +272,9 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 	buttons = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(buttons, innerW))
 
 	help := m.renderHints([]hint{
-		{"←/→", "choose"},
-		{"enter", "confirm"},
-		{"esc", "cancel"},
+		{key: "←/→", label: "choose"},
+		{key: "enter", label: "confirm"},
+		{key: "esc", label: "cancel"},
 	})
 	help = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(help, innerW))
 
@@ -331,4 +308,41 @@ func (m *Model) renderDeleteConfirmOverlay() string {
 		y = 0
 	}
 	return overlayBlock(base, box, x, y, m.terminalWidth)
+}
+
+// renderContextMenuOverlay renders a small popup listing the available actions
+// for the build that was right-clicked.
+func (m *Model) renderContextMenuOverlay() string {
+	p := m.Style.Palette
+	m.computeLayout()
+
+	header := renderHeader(m)
+	body := m.renderBody()
+	footer := m.renderBuildFooter()
+	base := strings.Join([]string{header, body, footer}, "\n")
+
+	w, h := m.contextMenuSize()
+	ox, oy := m.contextMenuOrigin()
+
+	lines := make([]string, 0, len(m.contextMenuItems))
+	for i, it := range m.contextMenuItems {
+		label := it.label
+		style := m.Style.RegularRow
+		if i == m.contextMenuChoice {
+			style = m.Style.SelectedRow
+			label = "▸ " + label
+		} else {
+			label = "  " + label
+		}
+		inner := w - boxBorderFrameWidth
+		if inner < 1 {
+			inner = 1
+		}
+		line := style.Width(inner).Render(truncate(label, inner))
+		lines = append(lines, line)
+	}
+
+	box := renderBox("", m.Style.ActivePaneTitle.Render(" Build Options "), strings.Join(lines, "\n"), w, h, lp.Color(p.Accent))
+	frame := overlayBlock(base, box, ox, oy, m.terminalWidth)
+	return m.overlayToast(frame)
 }

@@ -83,6 +83,10 @@ const (
 	CmdOpenURL        // Open the selected build's download URL in a browser
 )
 
+// CmdNone marks a hint or menu entry with no bound action, so a click on it can
+// be recognised as inert instead of running CmdQuit (the zero value).
+const CmdNone CommandType = -1
+
 // KeyCommand defines a keyboard command with its key binding and description
 type KeyCommand struct {
 	Type        CommandType

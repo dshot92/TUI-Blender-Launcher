@@ -386,6 +386,283 @@ func (m *Model) handleDownloadCompleteMsg(msg downloadCompleteMsg) (tea.Model, t
 	return m, m.commands.ProgramMsgListener()
 }
 
+// executeFooterCommand runs the action bound to a clicked/detected footer hint.
+func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
+	switch cmd {
+	case CmdQuit:
+		return m, tea.Quit
+	case CmdShowSettings:
+		m.currentView = viewSettings
+		m.Settings.SetValues(SettingsValues{
+			DownloadDir:   m.config.DownloadDir,
+			VersionFilter: m.config.VersionFilter,
+			BuildType:     m.config.BuildType,
+			ReleaseTypes:  m.config.ReleaseTypes,
+			Theme:         m.config.Theme,
+		})
+		m.settingsSaved = m.Settings.GetValues()
+		return m, nil
+	case CmdFetchBuilds:
+		return m, m.commands.FetchBuilds()
+	case CmdDownloadBuild:
+		return m.handleStartDownload()
+	case CmdLaunchBuild:
+		return m.handleLaunchBlender()
+	case CmdOpenBuildDir:
+		return m.handleOpenBuildDir()
+	case CmdOpenURL:
+		return m.handleOpenURL()
+	case CmdToggleDetail:
+		m.detailShown = !m.detailShown
+		m.computeLayout()
+		if m.detailShown && !m.layout.detailVisible {
+			return m, func() tea.Msg {
+				return statusMsg{text: "not enough space for the info panel"}
+			}
+		}
+		return m, nil
+	case CmdToggleSortOrder:
+		m.List.SortReversed = !m.List.SortReversed
+		m.List.SortBuilds()
+		m.List.EnsureCursorVisible()
+		return m, nil
+	case CmdCleanOldBuilds:
+		return m, func() tea.Msg {
+			count, err := local.CleanOldBuilds(m.config.DownloadDir)
+			if err != nil {
+				return errMsg{err}
+			}
+			if count == 0 {
+				return statusMsg{text: "no old builds to clean"}
+			}
+			return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
+		}
+	case CmdDeleteBuild:
+		build := m.List.GetSelectedBuild()
+		if build == nil {
+			return m, nil
+		}
+		downloading := m.isDownloading(*build)
+		if !downloading && build.Status != model.StateLocal && build.Status != model.StateUpdate {
+			return m, nil
+		}
+		m.deleteConfirm = true
+		m.deleteConfirmBuild = *build
+		m.deleteConfirmCancel = downloading
+		m.deleteConfirmChoice = 0
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+// isDownloading reports whether build is mid-transfer. The build's own status is
+// authoritative, but a live transfer owned by the download manager also counts
+// even before the next status sync.
+func (m *Model) isDownloading(build model.BlenderBuild) bool {
+	if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+		return true
+	}
+	if m.commands != nil && m.commands.downloads != nil {
+		if state := m.commands.downloads.GetState(build.ID()); state != nil &&
+			(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
+			return true
+		}
+	}
+	return false
+}
+
+// executeSettingsCommand runs the action bound to a clicked settings hint.
+func (m *Model) executeSettingsCommand(cmd CommandType) (tea.Model, tea.Cmd) {
+	switch cmd {
+	case CmdQuit:
+		if m.Settings.EditMode || m.Settings.releaseEditing {
+			return m, nil
+		}
+		return m, tea.Quit
+	case CmdSaveSettings:
+		if m.Settings.EditMode || m.Settings.releaseEditing {
+			return m, nil
+		}
+		wasInitial := m.currentView == viewInitialSetup
+		m.currentView = viewList
+		mdl, c := m.SaveSettingsAndReturn()
+		if wasInitial {
+			statusCmd := func() tea.Msg {
+				return statusMsg{text: "Press f to fetch builds"}
+			}
+			return mdl, tea.Batch(c, statusCmd)
+		}
+		return mdl, c
+	case CmdToggleEditMode:
+		_, c := m.Settings.handleToggleEdit()
+		return m, c
+	case CmdMoveLeft:
+		if !m.Settings.EditMode {
+			m.Settings.cycleOption(-1)
+		}
+		return m, nil
+	case CmdCleanOldBuilds:
+		if m.Settings.EditMode || m.Settings.releaseEditing {
+			return m, nil
+		}
+		return m, func() tea.Msg {
+			count, err := local.CleanOldBuilds(m.config.DownloadDir)
+			if err != nil {
+				return errMsg{err}
+			}
+			if count == 0 {
+				return statusMsg{text: "no old builds to clean"}
+			}
+			return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
+		}
+	default:
+		return m, nil
+	}
+}
+
+// contextMenuItemsFor returns the action list applicable to build.
+func (m *Model) contextMenuItemsFor(build model.BlenderBuild) []contextMenuItem {
+	items := []contextMenuItem{}
+	status := build.Status
+	switch {
+	case m.isDownloading(build):
+		items = append(items, contextMenuItem{label: "Cancel download", cmd: CmdDeleteBuild})
+	case status == model.StateLocal:
+		items = append(items, contextMenuItem{label: "Launch", cmd: CmdLaunchBuild})
+		items = append(items, contextMenuItem{label: "Open directory", cmd: CmdOpenBuildDir})
+		items = append(items, contextMenuItem{label: "Delete", cmd: CmdDeleteBuild})
+	case status == model.StateUpdate:
+		items = append(items, contextMenuItem{label: "Download", cmd: CmdDownloadBuild})
+		items = append(items, contextMenuItem{label: "Launch", cmd: CmdLaunchBuild})
+		items = append(items, contextMenuItem{label: "Open directory", cmd: CmdOpenBuildDir})
+		items = append(items, contextMenuItem{label: "Delete", cmd: CmdDeleteBuild})
+	default:
+		items = append(items, contextMenuItem{label: "Download", cmd: CmdDownloadBuild})
+	}
+	if build.DownloadURL != "" && status != model.StateLocal {
+		items = append(items, contextMenuItem{label: "Open URL", cmd: CmdOpenURL})
+	}
+	if len(items) == 0 {
+		items = append(items, contextMenuItem{label: "No actions", cmd: CmdNone})
+	}
+	return items
+}
+
+func (m *Model) openContextMenu(buildIdx, x, y int) {
+	if buildIdx < 0 || buildIdx >= len(m.List.Builds) {
+		return
+	}
+	m.contextMenuVisible = true
+	m.contextMenuBuildIdx = buildIdx
+	m.contextMenuX = x
+	m.contextMenuY = y
+	m.contextMenuChoice = 0
+	m.contextMenuItems = m.contextMenuItemsFor(m.List.Builds[buildIdx])
+}
+
+func (m *Model) closeContextMenu() {
+	m.contextMenuVisible = false
+	m.contextMenuItems = nil
+}
+
+func (m *Model) contextMenuSize() (int, int) {
+	maxLabel := 0
+	for _, it := range m.contextMenuItems {
+		l := len([]rune(it.label))
+		if l > maxLabel {
+			maxLabel = l
+		}
+	}
+	w := maxLabel + 6
+	if w < 16 {
+		w = 16
+	}
+	h := len(m.contextMenuItems) + boxBorderFrameHeight
+	if h < boxBorderFrameHeight+1 {
+		h = boxBorderFrameHeight + 1
+	}
+	return w, h
+}
+
+func (m *Model) contextMenuOrigin() (int, int) {
+	w, h := m.contextMenuSize()
+	x := m.contextMenuX
+	y := m.contextMenuY
+	if x+w > m.terminalWidth {
+		x = m.terminalWidth - w
+	}
+	if x < 0 {
+		x = 0
+	}
+	if y+h > m.terminalHeight {
+		y = m.terminalHeight - h
+	}
+	if y < 0 {
+		y = 0
+	}
+	return x, y
+}
+
+func (m *Model) contextMenuItemAt(x, y int) int {
+	if !m.contextMenuVisible {
+		return -1
+	}
+	w, h := m.contextMenuSize()
+	ox, oy := m.contextMenuOrigin()
+	if x < ox+1 || x >= ox+w-1 {
+		return -1
+	}
+	if y < oy+1 || y >= oy+h-1 {
+		return -1
+	}
+	idx := y - (oy + 1)
+	if idx < 0 || idx >= len(m.contextMenuItems) {
+		return -1
+	}
+	return idx
+}
+
+func (m *Model) executeContextMenuItem() (tea.Model, tea.Cmd) {
+	if !m.contextMenuVisible || len(m.contextMenuItems) == 0 {
+		m.closeContextMenu()
+		return m, nil
+	}
+	if m.contextMenuChoice < 0 || m.contextMenuChoice >= len(m.contextMenuItems) {
+		m.closeContextMenu()
+		return m, nil
+	}
+	item := m.contextMenuItems[m.contextMenuChoice]
+	// select the underlying build first
+	if m.contextMenuBuildIdx >= 0 && m.contextMenuBuildIdx < len(m.List.Builds) {
+		m.List.Cursor = m.contextMenuBuildIdx
+		m.List.EnsureCursorVisible()
+	}
+	m.closeContextMenu()
+
+	switch item.cmd {
+	case CmdDownloadBuild:
+		return m.handleStartDownload()
+	case CmdLaunchBuild:
+		return m.handleLaunchBlender()
+	case CmdOpenBuildDir:
+		return m.handleOpenBuildDir()
+	case CmdDeleteBuild:
+		build := m.List.GetSelectedBuild()
+		if build != nil {
+			m.deleteConfirmBuild = *build
+			m.deleteConfirm = true
+			m.deleteConfirmCancel = m.isDownloading(*build)
+			m.deleteConfirmChoice = 0
+		}
+		return m, nil
+	case CmdOpenURL:
+		return m.handleOpenURL()
+	default:
+		return m, nil
+	}
+}
+
 func (m *Model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 	// Sync download states
 	m.SyncDownloadStates()

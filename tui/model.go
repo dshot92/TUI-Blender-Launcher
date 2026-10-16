@@ -1,9 +1,17 @@
 package tui
 
 import (
+	"time"
+
 	"github.com/dshot92/TUI-Blender-Launcher/config"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
+
+// contextMenuItem is a single build-context-menu entry.
+type contextMenuItem struct {
+	label string
+	cmd   CommandType
+}
 
 // Model represents the state of the TUI application.
 type Model struct {
@@ -61,6 +69,22 @@ type Model struct {
 	columns        []ColumnConfig
 	columnsWidth   int
 	columnsDesired []int
+
+	// Context menu opened by a right click on a build row.
+	contextMenuVisible  bool
+	contextMenuBuildIdx int
+	contextMenuX        int
+	contextMenuY        int
+	contextMenuChoice   int
+	contextMenuItems    []contextMenuItem
+
+	// Double-click detection for launching a local build. lastClickBuild is the
+	// row of the previous left click, used to recognise a repeat click on the
+	// same row within doubleClickWindow.
+	lastClickTime  time.Time
+	lastClickBuild int
+	lastClickX     int
+	lastClickY     int
 }
 
 // InitialModel creates the initial state of the TUI model.

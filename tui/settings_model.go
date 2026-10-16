@@ -525,6 +525,74 @@ func (m *SettingsModel) moveFocus(dir int) {
 	m.FocusIndex = (m.FocusIndex + dir + settingCount) % settingCount
 }
 
+// selectSetting focuses the settings row at index i, discarding any in-progress
+// edit or release toggle so a stray click can never save a partial value.
+func (m *SettingsModel) selectSetting(i int) {
+	if i < 0 || i >= settingCount {
+		return
+	}
+	if m.releaseEditing {
+		m.releaseBackup = nil
+		m.releaseEditing = false
+	}
+	if m.EditMode && m.FocusIndex != i {
+		m.cancelEdit()
+	}
+	m.FocusIndex = i
+	m.updateFocusStyles()
+}
+
+// startEdit enters edit mode for the focused text field, snapshotting its value
+// so Esc can revert it. It is a no-op when already editing or when the focused
+// row is not a text field.
+func (m *SettingsModel) startEdit() {
+	if m.EditMode || m.FocusIndex < 0 || m.FocusIndex >= len(m.Inputs) {
+		return
+	}
+	m.editBackup = m.Inputs[m.FocusIndex].Value()
+	m.resetDirCompletion()
+	m.EditMode = true
+	m.updateFocusStyles()
+}
+
+// optionAt returns the index of the option whose rendered segment contains the
+// column relX, measured from the start of the value area. Segments carry one
+// cell of horizontal padding on each side, matching renderOptions. It returns
+// -1 when relX falls in the gaps or past the end.
+func optionAt(options []string, relX int) int {
+	cursor := 0
+	for i, o := range options {
+		w := width(o) + 2
+		if relX >= cursor && relX < cursor+w {
+			return i
+		}
+		cursor += w
+	}
+	return -1
+}
+
+// releaseOptionAt is optionAt for the release-type chips, whose labels are
+// prefixed with a two-cell checkbox marker.
+func (m SettingsModel) releaseOptionAt(relX int) int {
+	selected := make(map[string]bool, len(m.ReleaseTypes))
+	for _, s := range m.ReleaseTypes {
+		selected[s] = true
+	}
+	cursor := 0
+	for i, opt := range m.ReleaseTypeOptions {
+		mark := "▢ "
+		if selected[opt] {
+			mark = "▣ "
+		}
+		w := width(mark+opt) + 2
+		if relX >= cursor && relX < cursor+w {
+			return i
+		}
+		cursor += w
+	}
+	return -1
+}
+
 // cycleOption advances the value of the focused option setting (Build Type or
 // Theme) in the given direction, wrapping around.
 func (m *SettingsModel) cycleOption(dir int) {
