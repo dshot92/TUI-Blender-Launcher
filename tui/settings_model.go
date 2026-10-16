@@ -65,7 +65,7 @@ func settingDescription(i int) string {
 	case settingDownloadDir:
 		return "Folder where downloaded Blender builds are stored."
 	case settingVersionFilter:
-		return "Only show builds at or above this version. Leave empty to show all."
+		return "Only show builds at or above this version (e.g., 4.0, 3.6). Leave empty to show all."
 	case settingBuildType:
 		return "Default build type fetched from the Blender BuildBot."
 	case settingTheme:
@@ -260,7 +260,11 @@ func (m SettingsModel) renderDetail(w int) string {
 		"",
 		" " + dividerStyle.Render(strings.Repeat("─", contentW)),
 		"",
-		descStyle.Padding(0, 1).Width(w).Render(settingDescription(idx)),
+	}
+	// Wrap the description to the pane width so longer hints (such as the
+	// version filter examples) remain visible instead of being clipped.
+	for _, dl := range wrapText(settingDescription(idx), contentW) {
+		lines = append(lines, descStyle.Padding(0, 1).Render(dl))
 	}
 	return strings.Join(lines, "\n")
 }
