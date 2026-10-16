@@ -173,8 +173,16 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 				}
 			case CmdSaveSettings:
 				if !m.Settings.EditMode {
+					wasInitial := m.currentView == viewInitialSetup
 					m.currentView = viewList
-					return m.SaveSettingsAndReturn()
+					mdl, cmd := m.SaveSettingsAndReturn()
+					if wasInitial {
+						statusCmd := func() tea.Msg {
+							return statusMsg{text: "Press f to fetch builds"}
+						}
+						return mdl, tea.Batch(cmd, statusCmd)
+					}
+					return mdl, cmd
 				}
 			case CmdCleanOldBuilds:
 				if !m.Settings.EditMode {
@@ -235,6 +243,45 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// A pending delete/cancel confirmation captures all keys until it is
+		// resolved, so the destructive action is never performed accidentally.
+		if m.deleteConfirm {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.deleteConfirm = false
+				return m, nil
+			case tea.KeyLeft:
+				m.deleteConfirmChoice = 0
+				return m, nil
+			case tea.KeyRight:
+				m.deleteConfirmChoice = 1
+				return m, nil
+			case tea.KeyEnter:
+				m.deleteConfirm = false
+				if m.deleteConfirmChoice == 0 {
+					return m.doDeleteBuild()
+				}
+				return m, nil
+			}
+			if msg.Type == tea.KeyRunes {
+				switch string(msg.Runes) {
+				case "h":
+					m.deleteConfirmChoice = 0
+					return m, nil
+				case "l":
+					m.deleteConfirmChoice = 1
+					return m, nil
+				case "x", "X", "y", "Y":
+					m.deleteConfirm = false
+					return m.doDeleteBuild()
+				case "n", "N", "q", "Q":
+					m.deleteConfirm = false
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
 		// Check for app-level commands first
 		for _, command := range GetCommandsForView(viewList) {
 			if MatchKey(msg, command.Type) {
@@ -262,7 +309,36 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case CmdOpenBuildDir:
 					return m.handleOpenBuildDir()
 				case CmdDeleteBuild:
-					return m.handleDeleteBuild()
+					build := m.List.GetSelectedBuild()
+					if build == nil {
+						return m, nil
+					}
+					downloading := build.Status == model.StateDownloading || build.Status == model.StateExtracting
+					if !downloading && m.commands != nil && m.commands.downloads != nil {
+						if state := m.commands.downloads.GetState(build.ID()); state != nil &&
+							(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
+							downloading = true
+						}
+					}
+					if !downloading && build.Status != model.StateLocal && build.Status != model.StateUpdate {
+						return m, nil
+					}
+					m.deleteConfirm = true
+					m.deleteConfirmBuild = *build
+					m.deleteConfirmCancel = downloading
+					m.deleteConfirmChoice = 0
+					return m, nil
+				case CmdCleanOldBuilds:
+					return m, func() tea.Msg {
+						count, err := local.CleanOldBuilds(m.config.DownloadDir)
+						if err != nil {
+							return errMsg{err}
+						}
+						if count == 0 {
+							return statusMsg{text: "no old builds to clean"}
+						}
+						return statusMsg{text: fmt.Sprintf("successfully cleaned %d old build(s)", count)}
+					}
 				case CmdToggleDetail:
 					m.detailShown = !m.detailShown
 					m.computeLayout()

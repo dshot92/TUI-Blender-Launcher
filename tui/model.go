@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 // Model represents the state of the TUI application.
@@ -44,6 +45,13 @@ type Model struct {
 	// hidden on launch and is toggled on demand; when space is tight a shown
 	// panel docks below the list rather than disappearing.
 	detailShown bool
+
+	// deleteConfirm tracks a pending delete/cancel confirmation popup for a
+	// build, so a destructive action is never performed immediately.
+	deleteConfirm       bool
+	deleteConfirmBuild  model.BlenderBuild
+	deleteConfirmCancel bool
+	deleteConfirmChoice int // 0 = confirm (yes), 1 = abort (no)
 
 	// Layout, recomputed whenever the terminal or view changes.
 	layout layoutInfo

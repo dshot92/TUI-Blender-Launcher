@@ -116,6 +116,7 @@ var (
 		{Type: CmdEnd, Keys: []string{"end"}, Description: "Go to last item"},
 		{Type: CmdToggleDetail, Keys: []string{"tab"}, Description: "Toggle build info panel"},
 		{Type: CmdOpenURL, Keys: []string{"u"}, Description: "Open build download URL"},
+		{Type: CmdCleanOldBuilds, Keys: []string{"c"}, Description: "Clean old builds"},
 	}
 
 	// Settings view commands

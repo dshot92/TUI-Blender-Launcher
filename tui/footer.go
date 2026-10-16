@@ -46,6 +46,7 @@ func (m *Model) renderBuildFooter() string {
 		{PrimaryKey(CmdToggleSortOrder), "Reverse Sort"},
 		{PrimaryKey(CmdToggleDetail), infoLabel},
 		{PrimaryKey(CmdShowSettings), "Settings"},
+		{PrimaryKey(CmdCleanOldBuilds), "Clean Old"},
 		{PrimaryKey(CmdQuit), "Quit"},
 	}
 

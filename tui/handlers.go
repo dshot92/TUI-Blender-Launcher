@@ -164,8 +164,8 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleDeleteBuild prepares to delete a build
-func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
+// doDeleteBuild performs the (possibly cancel) action for a build.
+func (m *Model) doDeleteBuild() (tea.Model, tea.Cmd) {
 	selectedBuild := m.List.GetSelectedBuild()
 	if selectedBuild == nil {
 		return m, nil

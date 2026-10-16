@@ -21,13 +21,17 @@ func (m *Model) renderPageForView() string {
 		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, msg)
 	}
 
+	if m.deleteConfirm {
+		return m.renderDeleteConfirmOverlay()
+	}
+
 	m.computeLayout()
 
 	// The settings view is a modal: it replaces the header/body/footer chrome
 	// with a centered box over a dimmed background. Both this and the list view
 	// layer the transient status/error toast over the bottom of the frame.
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		return m.overlayToast(m.renderSettingsModal())
+		return m.overlayToast(m.renderSettingsModalOverlay())
 	}
 
 	header := renderHeader(m)
@@ -51,11 +55,15 @@ func (m *Model) renderBody() string {
 	return joinColumns(builds, detail, strings.Repeat(" ", paneGap))
 }
 
-// renderSettingsModal renders the settings (or initial setup) view as a centered
-// box over a dimmed background, Surge-style. The key hints live inside the box;
-// status/error messages are shown as a toast over the bottom of the frame.
-func (m *Model) renderSettingsModal() string {
+// renderSettingsModalOverlay renders the settings (or initial setup) view as a
+// centered box overlaid on top of the build list, so the surrounding context
+// remains visible.
+func (m *Model) renderSettingsModalOverlay() string {
 	p := m.Style.Palette
+	header := renderHeader(m)
+	body := m.renderBody()
+	footer := m.renderBuildFooter()
+	base := strings.Join([]string{header, body, footer}, "\n")
 	title := " Settings "
 	if m.currentView == viewInitialSetup {
 		title = " Welcome — Initial Setup "
@@ -112,11 +120,7 @@ func (m *Model) renderSettingsModal() string {
 		boxY = 0
 	}
 
-	frame := lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, box,
-		lp.WithWhitespaceChars(" "),
-		lp.WithWhitespaceBackground(lp.Color(p.Background)),
-	)
-
+	frame := overlayBlock(base, box, boxX, boxY, m.terminalWidth)
 	return m.overlayCompletionDropdown(frame, boxX, boxY, boxWidth, boxHeight)
 }
 
@@ -239,4 +243,92 @@ func (m *Model) overlayCompletionDropdown(frame string, boxX, boxY, boxWidth, bo
 	dropdown := renderBox("", "", strings.Join(contentLines, "\n"), dropW, dropHeight, lp.Color(p.Accent))
 
 	return overlayBlock(frame, dropdown, anchorX, anchorY, m.terminalWidth)
+}
+
+// renderDeleteConfirmOverlay renders a centered confirmation popup as an overlay
+// on top of the build list, leaving the surrounding content visible.
+func (m *Model) renderDeleteConfirmOverlay() string {
+	p := m.Style.Palette
+	title := " Confirm "
+
+	text := "Delete build " + m.deleteConfirmBuild.Version + "?"
+	if m.deleteConfirmCancel {
+		text = "Cancel download of " + m.deleteConfirmBuild.Version + "?"
+	}
+
+	m.computeLayout()
+	header := renderHeader(m)
+	body := m.renderBody()
+	footer := m.renderBuildFooter()
+	base := strings.Join([]string{header, body, footer}, "\n")
+
+	boxWidth := m.layout.settingsWidth
+	if boxWidth < settingsMinWidth {
+		boxWidth = settingsMinWidth
+	}
+	if boxWidth > m.terminalWidth {
+		boxWidth = m.terminalWidth
+	}
+	if boxWidth < 30 {
+		boxWidth = 30
+	}
+
+	innerW := boxWidth - boxBorderFrameWidth
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	content := m.Style.HelpDesc.Render(text)
+	content = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(content, innerW))
+
+	// Two selectable choices, navigable with left/right (or h/l).
+	yesStyle := m.Style.Muted
+	noStyle := m.Style.Muted
+	if m.deleteConfirmChoice == 0 {
+		yesStyle = m.Style.ActivePaneTitle
+	} else {
+		noStyle = m.Style.ActivePaneTitle
+	}
+	yesBtn := yesStyle.Render("[ Yes ]")
+	noBtn := noStyle.Render("[ No ]")
+	buttons := yesBtn + "   " + noBtn
+	buttons = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(buttons, innerW))
+
+	help := m.renderHints([]hint{
+		{"←/→", "choose"},
+		{"enter", "confirm"},
+		{"esc", "cancel"},
+	})
+	help = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(help, innerW))
+
+	lines := make([]string, 0, 8)
+	lines = append(lines, "")
+	lines = append(lines, content)
+	lines = append(lines, "", buttons, "", help)
+
+	boxHeight := len(lines) + boxBorderFrameHeight
+	if boxHeight > m.terminalHeight {
+		boxHeight = m.terminalHeight
+	}
+	if minH := boxBorderFrameHeight + 2; boxHeight < minH {
+		boxHeight = minH
+	}
+
+	box := renderBox("",
+		m.Style.ActivePaneTitle.Render(title),
+		strings.Join(lines, "\n"),
+		boxWidth,
+		boxHeight,
+		lp.Color(p.Accent),
+	)
+
+	x := (m.terminalWidth - boxWidth) / 2
+	y := (m.terminalHeight - boxHeight) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return overlayBlock(base, box, x, y, m.terminalWidth)
 }

@@ -82,7 +82,15 @@ func (m *Model) overlayToast(frame string) string {
 	panelLines := strings.Split(panel, "\n")
 	panelW := width(panelLines[0])
 	x := (m.terminalWidth - panelW) / 2
-	y := m.terminalHeight - len(panelLines)
+	// Place the popup about three-quarters down the terminal, while keeping it
+	// inside the body/table area so it still never overlaps the footer/commands.
+	y := m.terminalHeight * 3 / 4
+	if y+len(panelLines) > m.terminalHeight-footerHeight {
+		y = m.terminalHeight - footerHeight - len(panelLines)
+	}
+	if y < 0 {
+		y = 0
+	}
 
 	return overlayBlock(frame, panel, x, y, m.terminalWidth)
 }
