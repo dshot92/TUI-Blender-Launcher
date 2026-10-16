@@ -42,18 +42,26 @@ func NewAPIWithClient(client *http.Client) *API {
 	return &API{client: client}
 }
 
+// FetchOptions selects which builds FetchBuilds returns.
+type FetchOptions struct {
+	VersionFilter string
+	BuildType     string
+	ReleaseTypes  []string // release_cycle values to keep; empty = all
+}
+
 // FetchBuilds fetches the list of Blender builds from the official API,
-// filtering for the current OS/architecture, file extensions, and minimum version.
-func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, error) {
+// filtering for the current OS/architecture, file extensions, release cycle,
+// and minimum version.
+func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
 	// Get config
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Determine which API URL to use based on buildType, defaulting to daily
-	// builds if the value is unknown.
-	apiURL, ok := buildTypeURLs[model.ParseBuildType(buildType)]
+	// Determine which API URL to use based on the build type, defaulting to
+	// daily builds if the value is unknown.
+	apiURL, ok := buildTypeURLs[model.ParseBuildType(opts.BuildType)]
 	if !ok {
 		apiURL = dailyBlenderAPIURL
 	}
@@ -94,10 +102,12 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 
 	// Parse the version filter once. An invalid filter is a user error, so it is
 	// surfaced to the caller (which shows it in the TUI).
-	vf, err := model.ParseVersionFilter(versionFilter)
+	vf, err := model.ParseVersionFilter(opts.VersionFilter)
 	if err != nil {
-		return nil, fmt.Errorf("invalid version filter format '%s': %w", versionFilter, err)
+		return nil, fmt.Errorf("invalid version filter format '%s': %w", opts.VersionFilter, err)
 	}
+
+	releaseFilter := model.ParseReleaseTypes(opts.ReleaseTypes)
 
 	// --- Filtering Loop ---
 	var platformFilteredBuilds []model.BlenderBuild
@@ -106,6 +116,9 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 			continue
 		}
 		if !hasAllowedExtension(build.FileExtension) {
+			continue
+		}
+		if !releaseFilter.Matches(build) {
 			continue
 		}
 		if !vf.Matches(build, false) {

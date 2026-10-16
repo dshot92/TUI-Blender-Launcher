@@ -249,7 +249,11 @@ func (c *Commands) FetchBuilds() tea.Cmd {
 
 		// Create API instance
 		a := api.NewAPI()
-		builds, err := a.FetchBuilds(c.cfg.VersionFilter, c.cfg.BuildType)
+		builds, err := a.FetchBuilds(api.FetchOptions{
+			VersionFilter: c.cfg.VersionFilter,
+			BuildType:     c.cfg.BuildType,
+			ReleaseTypes:  c.cfg.ReleaseTypes,
+		})
 		return buildsFetchedMsg{builds, err}
 	}
 }

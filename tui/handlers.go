@@ -210,11 +210,8 @@ func (m *Model) mergeBuilds(incoming []model.BlenderBuild) []model.BlenderBuild 
 		}
 	}
 
-	// Apply version filter if set.
-	if m.config.VersionFilter != "" {
-		merged = m.applyVersionFilter(merged)
-	}
-	return merged
+	// Apply version and release-type filters if set.
+	return m.applyFilters(merged)
 }
 
 // handleLocalBuildsScanned processes the result of scanning local builds
@@ -269,6 +266,18 @@ func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderB
 	return vf.Apply(builds)
 }
 
+// applyFilters applies the configured version and release-type filters to a
+// build list. Local and in-progress builds are always kept.
+func (m *Model) applyFilters(builds []model.BlenderBuild) []model.BlenderBuild {
+	if m.config.VersionFilter != "" {
+		builds = m.applyVersionFilter(builds)
+	}
+	if f := model.ParseReleaseTypes(m.config.ReleaseTypes); len(f) > 0 {
+		builds = f.Apply(builds)
+	}
+	return builds
+}
+
 // handleBuildsUpdated finalizes the build list after determining local/online status
 func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	// Create a map of downloading/extracting builds from the current list to restore later
@@ -289,10 +298,8 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Apply version filter if set
-	if m.config.VersionFilter != "" {
-		m.List.Builds = m.applyVersionFilter(m.List.Builds)
-	}
+	// Apply the configured filters
+	m.List.Builds = m.applyFilters(m.List.Builds)
 
 	m.List.SortBuilds()
 	m.List.EnsureCursorVisible()

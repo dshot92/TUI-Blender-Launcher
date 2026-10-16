@@ -176,7 +176,13 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				case CmdShowSettings:
 					m.currentView = viewSettings
-					m.Settings.SetValues(m.config.DownloadDir, m.config.VersionFilter, m.config.BuildType, m.config.Theme)
+					m.Settings.SetValues(SettingsValues{
+						DownloadDir:   m.config.DownloadDir,
+						VersionFilter: m.config.VersionFilter,
+						BuildType:     m.config.BuildType,
+						ReleaseTypes:  m.config.ReleaseTypes,
+						Theme:         m.config.Theme,
+					})
 					return m, nil
 				case CmdFetchBuilds:
 					return m, m.commands.FetchBuilds()

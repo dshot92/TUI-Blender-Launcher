@@ -40,7 +40,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-4.0.0-linux-x86_64.tar.xz",
 				"file_extension": "tar.xz",
-				"release_cycle": "daily"
+				"release_cycle": "alpha"
 			},
 			{
 				"version": "3.6.2",
@@ -53,7 +53,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-3.6.2-linux-x86_64.tar.xz",
 				"file_extension": "tar.xz",
-				"release_cycle": "daily"
+				"release_cycle": "beta"
 			},
 			{
 				"version": "3.5.1",
@@ -66,7 +66,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-3.5.1-windows-x86_64.zip",
 				"file_extension": "zip",
-				"release_cycle": "daily"
+				"release_cycle": "stable"
 			},
 			{
 				"version": "4.0.0",
@@ -79,7 +79,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123,
 				"file_name": "blender-4.0.0-linux-x86_64.sha256",
 				"file_extension": "sha256",
-				"release_cycle": "daily"
+				"release_cycle": "candidate"
 			}
 		]`)
 	}))
@@ -98,6 +98,7 @@ func TestFetchBuilds(t *testing.T) {
 		name            string
 		versionFilter   string
 		buildType       string
+		releaseTypes    []string
 		expectError     bool
 		expectedCount   int
 		checkFirstBuild func(*testing.T, model.BlenderBuild)
@@ -148,6 +149,22 @@ func TestFetchBuilds(t *testing.T) {
 			checkFirstBuild: nil,
 		},
 		{
+			name:            "release filter alpha and beta",
+			buildType:       "daily",
+			releaseTypes:    []string{"alpha", "beta"},
+			expectError:     false,
+			expectedCount:   2,
+			checkFirstBuild: nil,
+		},
+		{
+			name:            "release filter stable only",
+			buildType:       "daily",
+			releaseTypes:    []string{"stable"},
+			expectError:     false,
+			expectedCount:   0, // the only stable entry is windows, dropped by the platform filter
+			checkFirstBuild: nil,
+		},
+		{
 			name:            "invalid filter",
 			versionFilter:   "invalid",
 			buildType:       "daily",
@@ -162,7 +179,11 @@ func TestFetchBuilds(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Call the function
-			builds, err := a.FetchBuilds(tc.versionFilter, tc.buildType)
+			builds, err := a.FetchBuilds(FetchOptions{
+				VersionFilter: tc.versionFilter,
+				BuildType:     tc.buildType,
+				ReleaseTypes:  tc.releaseTypes,
+			})
 
 			// Check error result
 			if tc.expectError && err == nil {
@@ -208,7 +229,7 @@ func TestFetchBuildsServerError(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := a.FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds(FetchOptions{BuildType: "daily"})
 
 	// Should return an error
 	if err == nil {
@@ -245,7 +266,7 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := a.FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds(FetchOptions{BuildType: "daily"})
 
 	// Should return an error
 	if err == nil {

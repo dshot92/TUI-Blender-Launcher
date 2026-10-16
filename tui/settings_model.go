@@ -14,11 +14,12 @@ import (
 
 // Settings rows. The order matches the focus order (FocusIndex) so navigation
 // and rendering stay in sync; the two text inputs always occupy the first
-// indices, followed by the Build Type and Theme option rows.
+// indices, followed by the Build Channel, Release Types and Theme option rows.
 const (
 	settingDownloadDir = iota
 	settingVersionFilter
 	settingBuildType
+	settingReleaseFilter
 	settingTheme
 	settingCount
 )
@@ -27,22 +28,36 @@ const (
 // rendered as a left list / right detail layout (list on top when narrow), with
 // the selected setting's value and description shown in the detail pane.
 type SettingsModel struct {
-	Inputs           []textinput.Model
-	FocusIndex       int
-	EditMode         bool
-	BuildType        string
-	BuildTypeOptions []string
-	BuildTypeIndex   int
-	Theme            string
-	ThemeOptions     []string
-	ThemeIndex       int
-	Style            Style
-	Config           config.Config
-	width            int
+	Inputs             []textinput.Model
+	FocusIndex         int
+	EditMode           bool
+	BuildType          string
+	BuildTypeOptions   []string
+	BuildTypeIndex     int
+	ReleaseTypes       []string
+	ReleaseTypeOptions []string
+	ReleaseCursor      int
+	releaseEditing     bool
+	Theme              string
+	ThemeOptions       []string
+	ThemeIndex         int
+	Style              Style
+	Config             config.Config
+	width              int
 
 	// editBackup holds the value an input had when editing began, so Esc can
 	// discard the edit and revert.
 	editBackup string
+}
+
+// SettingsValues is a snapshot of the settings a user can edit. Building it
+// (and applying it) through a struct keeps call sites stable as rows are added.
+type SettingsValues struct {
+	DownloadDir   string
+	VersionFilter string
+	BuildType     string
+	ReleaseTypes  []string
+	Theme         string
 }
 
 // settingLabel returns the display label for a settings row.
@@ -53,7 +68,9 @@ func settingLabel(i int) string {
 	case settingVersionFilter:
 		return "Version Filter"
 	case settingBuildType:
-		return "Build Type"
+		return "Build Channel"
+	case settingReleaseFilter:
+		return "Release Types"
 	case settingTheme:
 		return "Theme"
 	}
@@ -68,7 +85,9 @@ func settingDescription(i int) string {
 	case settingVersionFilter:
 		return "Only show builds at or above this version (e.g., 4.0, 3.6). Leave empty to show all."
 	case settingBuildType:
-		return "Default build type fetched from the Blender BuildBot."
+		return "Blender channel fetched from the BuildBot: daily, experimental or patch."
+	case settingReleaseFilter:
+		return "Only show builds of the selected release types. Press enter to toggle, none selected shows all."
 	case settingTheme:
 		return "Interface color palette. Applied immediately, saved on exit."
 	}
@@ -80,13 +99,15 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 	p := style.Palette
 
 	m := SettingsModel{
-		Config:           cfg,
-		Style:            style,
-		BuildTypeOptions: model.BuildTypeNames(),
-		BuildType:        cfg.BuildType,
-		ThemeOptions:     PaletteNames(),
-		FocusIndex:       settingDownloadDir,
-		EditMode:         false,
+		Config:             cfg,
+		Style:              style,
+		BuildTypeOptions:   model.BuildTypeNames(),
+		BuildType:          cfg.BuildType,
+		ReleaseTypeOptions: model.ReleaseFilterOptions(),
+		ReleaseTypes:       []string(model.ParseReleaseTypes(cfg.ReleaseTypes)),
+		ThemeOptions:       PaletteNames(),
+		FocusIndex:         settingDownloadDir,
+		EditMode:           false,
 	}
 
 	// Theme the inputs so they match the active palette instead of the bubbles
@@ -290,6 +311,8 @@ func (m SettingsModel) detailValue(w int, labelStyle, valueStyle lp.Style) strin
 		return label + valueStyle.Render(truncate(v, avail))
 	case settingBuildType:
 		return label + m.renderOptions(m.BuildTypeOptions, m.BuildType, avail)
+	case settingReleaseFilter:
+		return label + m.renderReleaseOptions(avail)
 	case settingTheme:
 		return label + m.renderOptions(m.ThemeOptions, m.Theme, avail)
 	}
@@ -319,6 +342,51 @@ func (m SettingsModel) renderOptions(options []string, current string, avail int
 	return s
 }
 
+// renderReleaseOptions renders the release-type multi-select as a row of
+// toggle chips. When the row is in toggle mode the cursor chip is underlined;
+// if the chips do not fit the available width a compact summary is shown.
+func (m SettingsModel) renderReleaseOptions(avail int) string {
+	p := m.Style.Palette
+	on := lp.NewStyle().Padding(0, 1).Bold(true).
+		Foreground(lp.Color(p.Background)).Background(lp.Color(p.Accent))
+	off := lp.NewStyle().Padding(0, 1).Foreground(lp.Color(p.Muted))
+	cursor := lp.NewStyle().Padding(0, 1).Bold(true).Underline(true).
+		Foreground(lp.Color(p.Accent))
+
+	selected := make(map[string]bool, len(m.ReleaseTypes))
+	for _, s := range m.ReleaseTypes {
+		selected[s] = true
+	}
+
+	var b strings.Builder
+	for i, opt := range m.ReleaseTypeOptions {
+		mark := "▢ "
+		style := off
+		if selected[opt] {
+			mark = "▣ "
+			style = on
+		}
+		if m.releaseEditing && i == m.ReleaseCursor {
+			style = cursor
+		}
+		b.WriteString(style.Render(mark + opt))
+	}
+	s := b.String()
+	if width(s) > avail {
+		return m.Style.Muted.Render(truncate(m.releaseSummary(), avail))
+	}
+	return s
+}
+
+// releaseSummary is a plain-text description of the current release selection,
+// used when the toggle chips do not fit.
+func (m SettingsModel) releaseSummary() string {
+	if len(m.ReleaseTypes) == 0 {
+		return "(all)"
+	}
+	return strings.Join(m.ReleaseTypes, ", ")
+}
+
 // Update handles update messages for the settings model.
 func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -333,6 +401,11 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Tab completes the directory path while it is being edited.
 		if m.EditMode && m.FocusIndex == settingDownloadDir && msg.Type == tea.KeyTab {
 			return m.handleDirCompletion()
+		}
+
+		// The release-type multi-select captures navigation while it is active.
+		if m.releaseEditing {
+			return m.handleReleaseKey(msg)
 		}
 
 		for _, cmd := range GetCommandsForView(viewSettings) {
@@ -382,6 +455,14 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // value of option settings. Enter commits the edit; Esc (handled separately)
 // discards it.
 func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
+	// The release-type row opens its own multi-select mode.
+	if m.FocusIndex == settingReleaseFilter {
+		m.releaseEditing = true
+		if m.ReleaseCursor < 0 || m.ReleaseCursor >= len(m.ReleaseTypeOptions) {
+			m.ReleaseCursor = 0
+		}
+		return m, nil
+	}
 	if m.FocusIndex >= len(m.Inputs) {
 		m.cycleOption(1)
 		return m, nil
@@ -434,6 +515,63 @@ func (m *SettingsModel) cycleOption(dir int) {
 		m.ThemeIndex = (m.ThemeIndex + dir + len(m.ThemeOptions)) % len(m.ThemeOptions)
 		m.Theme = m.ThemeOptions[m.ThemeIndex]
 	}
+}
+
+// handleReleaseKey handles keys while the release-type multi-select is active:
+// left/right (or h/l) move the cursor, space/enter toggle the focused chip and
+// esc leaves the mode.
+func (m *SettingsModel) handleReleaseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.releaseEditing = false
+	case tea.KeyLeft, tea.KeyUp:
+		m.moveReleaseCursor(-1)
+	case tea.KeyRight, tea.KeyDown:
+		m.moveReleaseCursor(1)
+	case tea.KeySpace, tea.KeyEnter:
+		m.toggleRelease()
+	case tea.KeyRunes:
+		switch string(msg.Runes) {
+		case "h":
+			m.moveReleaseCursor(-1)
+		case "l":
+			m.moveReleaseCursor(1)
+		case " ":
+			m.toggleRelease()
+		}
+	}
+	return m, nil
+}
+
+// moveReleaseCursor advances the highlighted chip, wrapping around.
+func (m *SettingsModel) moveReleaseCursor(dir int) {
+	n := len(m.ReleaseTypeOptions)
+	if n == 0 {
+		return
+	}
+	m.ReleaseCursor = (m.ReleaseCursor + dir + n) % n
+}
+
+// toggleRelease flips the focused release cycle in the selection. The result is
+// re-canonicalized so the stored order is stable.
+func (m *SettingsModel) toggleRelease() {
+	if m.ReleaseCursor < 0 || m.ReleaseCursor >= len(m.ReleaseTypeOptions) {
+		return
+	}
+	opt := m.ReleaseTypeOptions[m.ReleaseCursor]
+	next := make([]string, 0, len(m.ReleaseTypes)+1)
+	removed := false
+	for _, s := range m.ReleaseTypes {
+		if s == opt {
+			removed = true
+			continue
+		}
+		next = append(next, s)
+	}
+	if !removed {
+		next = append(next, opt)
+	}
+	m.ReleaseTypes = []string(model.ParseReleaseTypes(next))
 }
 
 // updateFocusStyles applies the palette to the text inputs based on focus.
@@ -496,29 +634,39 @@ func (m *SettingsModel) handleDirCompletion() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// GetValues returns the current values from the inputs
-func (m *SettingsModel) GetValues() (downloadDir, versionFilter, buildType, theme string) {
-	return m.Inputs[settingDownloadDir].Value(), m.Inputs[settingVersionFilter].Value(), m.BuildType, m.Theme
+// GetValues returns a snapshot of the current settings.
+func (m *SettingsModel) GetValues() SettingsValues {
+	return SettingsValues{
+		DownloadDir:   m.Inputs[settingDownloadDir].Value(),
+		VersionFilter: m.Inputs[settingVersionFilter].Value(),
+		BuildType:     m.BuildType,
+		ReleaseTypes:  append([]string(nil), m.ReleaseTypes...),
+		Theme:         m.Theme,
+	}
 }
 
-// SetValues sets the values (e.g., when reloading config)
-func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType, theme string) {
-	m.Inputs[settingDownloadDir].SetValue(downloadDir)
-	m.Inputs[settingVersionFilter].SetValue(versionFilter)
+// SetValues applies a snapshot of settings (e.g., when reloading config).
+func (m *SettingsModel) SetValues(v SettingsValues) {
+	m.Inputs[settingDownloadDir].SetValue(v.DownloadDir)
+	m.Inputs[settingVersionFilter].SetValue(v.VersionFilter)
 
-	m.BuildType = buildType
+	m.BuildType = v.BuildType
 	for i, opt := range m.BuildTypeOptions {
-		if opt == buildType {
+		if opt == v.BuildType {
 			m.BuildTypeIndex = i
 			break
 		}
 	}
 
-	m.setTheme(theme)
+	m.ReleaseTypes = []string(model.ParseReleaseTypes(v.ReleaseTypes))
+	m.ReleaseCursor = 0
 
-	// Leaving and re-entering the view must never resume in edit mode.
+	m.setTheme(v.Theme)
+
+	// Leaving and re-entering the view must never resume in edit or toggle mode.
 	m.EditMode = false
 	m.editBackup = ""
+	m.releaseEditing = false
 	m.updateFocusStyles()
 }
 

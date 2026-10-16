@@ -30,9 +30,9 @@ type Model struct {
 
 	Style Style
 
-	// detailShown controls whether the build info panel is requested. The panel
-	// is hidden only when the user toggles it off; when space is tight it docks
-	// below the list rather than disappearing.
+	// detailShown controls whether the build info panel is requested. It starts
+	// hidden on launch and is toggled on demand; when space is tight a shown
+	// panel docks below the list rather than disappearing.
 	detailShown bool
 
 	// Layout, recomputed whenever the terminal or view changes.
@@ -56,7 +56,7 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		Settings:    NewSettingsModel(cfg, style),
 		Progress:    NewProgressModel(),
 		Style:       style,
-		detailShown: true,
+		detailShown: false,
 	}
 
 	if needsSetup {
@@ -226,13 +226,14 @@ func (m *Model) SyncDownloadStates() {
 // SaveSettings saves the current settings to the configuration file
 func (m *Model) SaveSettings() error {
 	// Update config values from settings inputs
-	downloadDir, versionFilter, buildType, theme := m.Settings.GetValues()
+	v := m.Settings.GetValues()
 
-	m.config.DownloadDir = downloadDir
-	m.config.VersionFilter = versionFilter
-	m.config.BuildType = buildType
-	m.config.Theme = theme
-	m.setTheme(ResolvePalette(theme))
+	m.config.DownloadDir = v.DownloadDir
+	m.config.VersionFilter = v.VersionFilter
+	m.config.BuildType = v.BuildType
+	m.config.ReleaseTypes = v.ReleaseTypes
+	m.config.Theme = v.Theme
+	m.setTheme(ResolvePalette(v.Theme))
 
 	// Save the config
 	return config.SaveConfig(m.config)

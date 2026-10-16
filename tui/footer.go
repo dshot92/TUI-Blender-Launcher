@@ -98,6 +98,15 @@ func (m *Model) settingsHints() []hint {
 		}
 	}
 
+	// While toggling release types, advertise the toggle controls.
+	if m.Settings.releaseEditing {
+		return []hint{
+			{"←/→", "move"},
+			{"space", "toggle"},
+			{"esc", "done"},
+		}
+	}
+
 	// Only offer the clean option when there is something to clean.
 	showClean := false
 	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)

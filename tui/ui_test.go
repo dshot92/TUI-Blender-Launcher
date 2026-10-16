@@ -48,6 +48,12 @@ func sampleModel() *Model {
 	return m
 }
 
+// showInfoPanel enables the build info pane for tests that exercise its layout.
+func showInfoPanel(m *Model) {
+	m.detailShown = true
+	m.computeLayout()
+}
+
 func assertExactWidth(t *testing.T, label, out string, w int) {
 	t.Helper()
 	for i, line := range strings.Split(out, "\n") {
@@ -97,6 +103,7 @@ func lineContaining(s, sub string) int {
 
 func TestDetailPaneSideBySideWhenWide(t *testing.T) {
 	m := sampleModel()
+	showInfoPanel(m)
 	m.UpdateWindowSize(150, 40)
 	if !m.layout.detailVisible || m.layout.detailStacked {
 		t.Fatalf("want visible side-by-side at 150 cols (visible=%v stacked=%v)",
@@ -111,6 +118,7 @@ func TestDetailPaneStacksWhenSplitWouldClipTable(t *testing.T) {
 	// 110 cols leaves the split table too narrow to show every value, so the
 	// info panel must dock below rather than squeeze the table.
 	m := sampleModel()
+	showInfoPanel(m)
 	m.UpdateWindowSize(110, 30)
 	if !m.layout.detailStacked {
 		t.Fatalf("want stacked when the split would clip (stacked=%v visible=%v)",
@@ -126,6 +134,7 @@ func TestDetailPaneStacksWhenSplitWouldClipTable(t *testing.T) {
 
 func TestDetailPaneStacksWhenNarrow(t *testing.T) {
 	m := sampleModel()
+	showInfoPanel(m)
 	m.UpdateWindowSize(90, 30)
 	if !m.layout.detailVisible || !m.layout.detailStacked {
 		t.Fatalf("want stacked panel at 90 cols (visible=%v stacked=%v)",
@@ -146,27 +155,34 @@ func TestDetailPaneStacksWhenNarrow(t *testing.T) {
 func TestToggleDetailKey(t *testing.T) {
 	m := sampleModel()
 	m.UpdateWindowSize(150, 40)
-	if !m.layout.detailVisible {
-		t.Fatalf("panel should start visible")
+	if m.detailShown || m.layout.detailVisible {
+		t.Fatalf("panel should start hidden (shown=%v visible=%v)",
+			m.detailShown, m.layout.detailVisible)
+	}
+	if strings.Contains(plain(m.View()), "Details") {
+		t.Fatalf("Details pane should be absent on launch")
 	}
 
-	// Tab hides it.
+	// Tab shows it.
 	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.detailShown {
-		t.Fatalf("detailShown should be false after Tab")
+	if !m.detailShown {
+		t.Fatalf("detailShown should be true after Tab")
 	}
-	if m.layout.detailVisible {
-		t.Fatalf("panel should be hidden after toggling off")
+	if !m.layout.detailVisible {
+		t.Fatalf("panel should be visible after toggling on")
+	}
+	if !strings.Contains(plain(m.View()), "Details") {
+		t.Fatalf("expected Details pane after toggling on")
+	}
+
+	// Tab hides it again.
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.detailShown || m.layout.detailVisible {
+		t.Fatalf("panel should be hidden again after second Tab (shown=%v visible=%v)",
+			m.detailShown, m.layout.detailVisible)
 	}
 	if strings.Contains(plain(m.View()), "Details") {
 		t.Fatalf("Details pane should be gone after toggling off")
-	}
-
-	// Tab shows it again.
-	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if !m.detailShown || !m.layout.detailVisible {
-		t.Fatalf("panel should be visible again after second Tab (shown=%v visible=%v)",
-			m.detailShown, m.layout.detailVisible)
 	}
 
 	// Width stays exactly right in both states.
@@ -285,11 +301,11 @@ func TestSettingsThemeSelectionAndLivePreview(t *testing.T) {
 	}
 
 	// Move focus to the Theme row.
-	for i := 0; i < len(m.Settings.Inputs)+1; i++ {
+	for i := 0; i < settingTheme; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
-	if want := len(m.Settings.Inputs) + 1; m.Settings.FocusIndex != want {
-		t.Fatalf("focus = %d, want %d", m.Settings.FocusIndex, want)
+	if m.Settings.FocusIndex != settingTheme {
+		t.Fatalf("focus = %d, want %d", m.Settings.FocusIndex, settingTheme)
 	}
 
 	// Cycle to the next palette; the live UI must update immediately.
@@ -319,8 +335,8 @@ func TestSettingsThemeSelectionAndLivePreview(t *testing.T) {
 	if m.config.Theme != "gruvbox" {
 		t.Fatalf("config theme = %q, want gruvbox", m.config.Theme)
 	}
-	if _, _, _, theme := m.Settings.GetValues(); theme != "gruvbox" {
-		t.Fatalf("GetValues theme = %q, want gruvbox", theme)
+	if v := m.Settings.GetValues(); v.Theme != "gruvbox" {
+		t.Fatalf("GetValues theme = %q, want gruvbox", v.Theme)
 	}
 }
 
@@ -337,7 +353,7 @@ func TestRenderAllPalettes(t *testing.T) {
 func TestSettingsSetValuesNormalizesTheme(t *testing.T) {
 	cfg := config.Config{DownloadDir: "/tmp/x", BuildType: "daily", Theme: "dracula"}
 	s := NewSettingsModel(cfg, NewStyle())
-	s.SetValues("/tmp/y", "4.2", "patch", "does-not-exist")
+	s.SetValues(SettingsValues{DownloadDir: "/tmp/y", VersionFilter: "4.2", BuildType: "patch", Theme: "does-not-exist"})
 	if s.Theme != DefaultPaletteName {
 		t.Fatalf("unknown theme normalized to %q, want %q", s.Theme, DefaultPaletteName)
 	}
@@ -399,11 +415,11 @@ func TestSettingsEnterOnOptionCyclesWithoutEditMode(t *testing.T) {
 	m := sampleModel()
 	m.currentView = viewSettings
 	m.UpdateWindowSize(120, 34)
-	m.Settings.SetValues("/tmp/blender", "", "daily", "dracula")
+	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/blender", BuildType: "daily", Theme: "dracula"})
 
 	// Move to the Theme row and press Enter: it should cycle the value instead
 	// of entering edit mode.
-	for i := 0; i < len(m.Settings.Inputs)+1; i++ {
+	for i := 0; i < settingTheme; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -420,7 +436,7 @@ func TestSettingsEscStopsEditing(t *testing.T) {
 	m := sampleModel()
 	m.currentView = viewSettings
 	m.UpdateWindowSize(120, 34)
-	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/original", BuildType: "daily", Theme: "dracula"})
 
 	// Enter edit mode on the first input and change the value.
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -449,7 +465,7 @@ func TestSettingsEnterCommitsEdit(t *testing.T) {
 	m := sampleModel()
 	m.currentView = viewSettings
 	m.UpdateWindowSize(120, 34)
-	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/original", BuildType: "daily", Theme: "dracula"})
 
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
@@ -468,7 +484,7 @@ func TestSettingsEditHintsShowBothEscAndEnter(t *testing.T) {
 	m := sampleModel()
 	m.currentView = viewSettings
 	m.UpdateWindowSize(120, 34)
-	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/original", BuildType: "daily", Theme: "dracula"})
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	keys := map[string]bool{}

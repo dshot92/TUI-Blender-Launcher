@@ -17,11 +17,12 @@ const AppName = "tui-blender-launcher" // Use lowercase app name
 
 // Config holds the application settings.
 type Config struct {
-	DownloadDir   string `toml:"download_dir"`
-	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
-	BuildType     string `toml:"build_type"`     // one of model.BuildTypes: "daily", "experimental", "patch"
-	Theme         string `toml:"theme"`          // UI palette name (dracula, catppuccin, nord, gruvbox, tokyonight)
-	UUID          string `toml:"uuid"`           // Unique identifier for this instance
+	DownloadDir   string   `toml:"download_dir"`
+	VersionFilter string   `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
+	BuildType     string   `toml:"build_type"`     // one of model.BuildTypes: "daily", "experimental", "patch"
+	ReleaseTypes  []string `toml:"release_types"`  // release_cycle values to show; empty = all
+	Theme         string   `toml:"theme"`          // UI palette name (dracula, catppuccin, nord, gruvbox, tokyonight)
+	UUID          string   `toml:"uuid"`           // Unique identifier for this instance
 }
 
 var (
@@ -115,6 +116,11 @@ func LoadConfig() (Config, error) {
 	// Normalize the build type so an unknown value never reaches the API or UI.
 	if bt := model.ParseBuildType(cfg.BuildType); string(bt) != cfg.BuildType {
 		cfg.BuildType = string(bt)
+	}
+
+	// Drop unknown or duplicate release cycles; an empty result means "all".
+	if len(cfg.ReleaseTypes) > 0 {
+		cfg.ReleaseTypes = []string(model.ParseReleaseTypes(cfg.ReleaseTypes))
 	}
 
 	return cfg, nil
