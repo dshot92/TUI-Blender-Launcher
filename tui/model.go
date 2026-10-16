@@ -190,7 +190,15 @@ func (m *Model) computeLayout() {
 	if sw < settingsMinWidth {
 		sw = settingsMinWidth
 	}
+	// Keep the modal inside the terminal with a small margin on each side.
+	if maxW := w - 2; sw > maxW {
+		sw = maxW
+	}
+	if sw < 20 {
+		sw = 20
+	}
 	li.settingsWidth = sw
+
 	if inner := sw - boxBorderFrameWidth; inner > 0 {
 		m.Settings.SetWidth(inner)
 	}

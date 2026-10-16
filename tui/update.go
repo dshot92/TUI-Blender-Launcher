@@ -109,7 +109,10 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 		if MatchKey(msg, cmd.Type) {
 			switch cmd.Type {
 			case CmdQuit:
-				return m, tea.Quit
+				// While editing a text field, "q" is a literal character.
+				if !m.Settings.EditMode {
+					return m, tea.Quit
+				}
 			case CmdSaveSettings:
 				if !m.Settings.EditMode {
 					m.currentView = viewList

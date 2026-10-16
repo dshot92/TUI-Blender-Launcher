@@ -31,8 +31,16 @@ const (
 	detailRatio = 0.40
 
 	// Settings modal sizing.
-	settingsMaxWidth = 96
+	settingsMaxWidth = 110
 	settingsMinWidth = 44
+
+	// Settings list/detail layout. The panes sit side by side only when the
+	// content is at least settingsMinTwoColumnWidth wide, otherwise they stack.
+	settingsMinTwoColumnWidth = 68
+	settingsListWidth         = 28
+	settingsMinListWidth      = 20
+	settingsMinDetailWidth    = 24
+	settingsColumnGap         = 3 // gap plus the vertical divider between panes
 )
 
 // View states

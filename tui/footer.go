@@ -87,8 +87,17 @@ func (m *Model) renderBuildFooter() string {
 	return m.renderFooter(m.renderHints(contextual), m.renderHints(general))
 }
 
-// renderSettingsFooter renders the footer for the settings view.
-func (m *Model) renderSettingsFooter() string {
+// settingsHints returns the key hints shown inside the settings modal.
+func (m *Model) settingsHints() []hint {
+	// While editing a text field, most keys go to the input, so advertise the
+	// two ways out: save (enter) or discard (esc).
+	if m.Settings.EditMode {
+		return []hint{
+			{"esc", "cancel"},
+			{"enter", "save"},
+		}
+	}
+
 	// Only offer the clean option when there is something to clean.
 	showClean := false
 	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)
@@ -97,13 +106,14 @@ func (m *Model) renderSettingsFooter() string {
 	}
 
 	commands := []hint{
-		{PrimaryKey(CmdToggleEditMode), "Edit setting"},
-		{PrimaryKey(CmdSaveSettings), "Save and exit"},
+		{PrimaryKey(CmdToggleEditMode), "edit"},
+		{PrimaryKey(CmdMoveLeft), "change"},
+		{PrimaryKey(CmdSaveSettings), "save"},
 	}
 	if showClean {
-		commands = append(commands, hint{PrimaryKey(CmdCleanOldBuilds), "Clean old Builds Dir"})
+		commands = append(commands, hint{PrimaryKey(CmdCleanOldBuilds), "clean"})
 	}
-	commands = append(commands, hint{PrimaryKey(CmdQuit), "Quit"})
+	commands = append(commands, hint{PrimaryKey(CmdQuit), "quit"})
 
-	return m.renderFooter("", m.renderHints(commands))
+	return commands
 }

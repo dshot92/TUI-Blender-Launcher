@@ -11,7 +11,20 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// SettingsModel handles the state and logic for the settings view.
+// Settings rows. The order matches the focus order (FocusIndex) so navigation
+// and rendering stay in sync; the two text inputs always occupy the first
+// indices, followed by the Build Type and Theme option rows.
+const (
+	settingDownloadDir = iota
+	settingVersionFilter
+	settingBuildType
+	settingTheme
+	settingCount
+)
+
+// SettingsModel handles the state and logic for the settings view. The view is
+// rendered as a left list / right detail layout (list on top when narrow), with
+// the selected setting's value and description shown in the detail pane.
 type SettingsModel struct {
 	Inputs           []textinput.Model
 	FocusIndex       int
@@ -25,40 +38,88 @@ type SettingsModel struct {
 	Style            Style
 	Config           config.Config
 	width            int
+
+	// editBackup holds the value an input had when editing began, so Esc can
+	// discard the edit and revert.
+	editBackup string
+}
+
+// settingLabel returns the display label for a settings row.
+func settingLabel(i int) string {
+	switch i {
+	case settingDownloadDir:
+		return "Download Directory"
+	case settingVersionFilter:
+		return "Version Filter"
+	case settingBuildType:
+		return "Build Type"
+	case settingTheme:
+		return "Theme"
+	}
+	return ""
+}
+
+// settingDescription returns the help text for a settings row.
+func settingDescription(i int) string {
+	switch i {
+	case settingDownloadDir:
+		return "Folder where downloaded Blender builds are stored."
+	case settingVersionFilter:
+		return "Only show builds at or above this version. Leave empty to show all."
+	case settingBuildType:
+		return "Default build type fetched from the Blender BuildBot."
+	case settingTheme:
+		return "Interface color palette. Applied immediately, saved on exit."
+	}
+	return ""
 }
 
 // NewSettingsModel creates a new SettingsModel.
 func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
+	p := style.Palette
+
 	m := SettingsModel{
 		Config:           cfg,
 		Style:            style,
 		BuildTypeOptions: []string{"daily", "experimental", "patch"},
 		BuildType:        cfg.BuildType,
 		ThemeOptions:     PaletteNames(),
-		FocusIndex:       0,
+		FocusIndex:       settingDownloadDir,
 		EditMode:         false,
 	}
 
-	// Initialize inputs
-	m.Inputs = make([]textinput.Model, 2)
+	// Theme the inputs so they match the active palette instead of the bubbles
+	// defaults (which ship with an unstyled "> " prompt and an invisible block).
+	fg := lp.NewStyle().Foreground(lp.Color(p.Foreground))
+	muted := lp.NewStyle().Foreground(lp.Color(p.Muted))
+	accent := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+	placeholder := lp.NewStyle().Foreground(lp.Color(p.Muted)).Italic(true)
 
-	// Download Dir input
-	t := textinput.New()
-	t.Placeholder = cfg.DownloadDir
-	t.SetValue(cfg.DownloadDir)
-	t.CharLimit = 256
-	t.Width = 50
-	m.Inputs[0] = t
+	newInput := func(placeholderText, value string, limit int) textinput.Model {
+		t := textinput.New()
+		t.Prompt = "❯ "
+		t.PromptStyle = accent
+		t.TextStyle = fg
+		t.PlaceholderStyle = placeholder
+		t.Placeholder = placeholderText
+		t.CharLimit = limit
+		t.SetValue(value)
+		// A solid, accent-tinted block cursor. Blink is disabled so the cursor
+		// is visible without running an extra blink command.
+		t.Cursor.Blink = false
+		t.Cursor.Style = lp.NewStyle().
+			Foreground(lp.Color(p.Accent)).
+			Background(lp.Color(p.Background))
+		t.Cursor.TextStyle = muted
+		return t
+	}
 
-	// Version Filter input
-	t = textinput.New()
-	t.Placeholder = "e.g., 4.0, 3.6 (leave empty for none)"
-	t.SetValue(cfg.VersionFilter)
-	t.CharLimit = 10
-	t.Width = 50
-	m.Inputs[1] = t
+	m.Inputs = []textinput.Model{
+		newInput(cfg.DownloadDir, cfg.DownloadDir, 256),
+		newInput("e.g., 4.0, 3.6 (empty = none)", cfg.VersionFilter, 10),
+	}
 
-	// Find initial build type index
+	// Resolve the configured build type so the selection is always valid.
 	for i, opt := range m.BuildTypeOptions {
 		if opt == cfg.BuildType {
 			m.BuildTypeIndex = i
@@ -69,6 +130,7 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 	// Resolve the configured theme so the selection is always valid.
 	m.setTheme(cfg.Theme)
 
+	m.updateInputWidths()
 	m.updateFocusStyles()
 
 	return m
@@ -85,90 +147,186 @@ func (m *SettingsModel) SetWidth(w int) {
 		w = 20
 	}
 	m.width = w
-	for i := range m.Inputs {
-		iw := w - 6
-		if iw < 10 {
-			iw = 10
-		}
-		m.Inputs[i].Width = iw
-	}
+	m.updateInputWidths()
 }
 
-// View returns the settings content, consistently left-aligned.
+// panes returns the settings list and detail widths for the current width,
+// reporting whether the two panes sit side by side. Narrow terminals fall back
+// to a stacked layout (list over detail).
+func (m SettingsModel) panes() (listW, detailW int, twoColumn bool) {
+	w := m.width
+	if w <= 0 {
+		w = 60
+	}
+	if w < settingsMinTwoColumnWidth {
+		return w, w, false
+	}
+
+	listW = settingsListWidth
+	if listW > w-settingsColumnGap-settingsMinDetailWidth {
+		listW = w - settingsColumnGap - settingsMinDetailWidth
+	}
+	if listW < settingsMinListWidth {
+		listW = settingsMinListWidth
+	}
+
+	detailW = w - listW - settingsColumnGap
+	if detailW < settingsMinDetailWidth {
+		detailW = settingsMinDetailWidth
+		listW = w - detailW - settingsColumnGap
+	}
+	if listW < 1 {
+		listW = 1
+	}
+	return listW, detailW, true
+}
+
+// View returns the settings content: a left list and a right detail pane when
+// there is room, stacked otherwise.
 func (m SettingsModel) View() string {
-	effectiveWidth := m.width
-	if effectiveWidth <= 0 {
-		effectiveWidth = 60
-	}
-
 	p := m.Style.Palette
-	labelStyle := lp.NewStyle().Bold(true).Foreground(lp.Color(p.Accent))
-	labelFocused := lp.NewStyle().Bold(true).
-		Foreground(lp.Color(p.Background)).
-		Background(lp.Color(p.Accent))
-	descStyle := lp.NewStyle().Italic(true).Foreground(lp.Color(p.Muted))
-	optionStyle := lp.NewStyle().Padding(0, 1).Foreground(lp.Color(p.Muted))
-	optionActive := lp.NewStyle().Padding(0, 1).Bold(true).
-		Foreground(lp.Color(p.Background)).
-		Background(lp.Color(p.Accent))
+	listW, detailW, twoColumn := m.panes()
 
-	// section renders a label, a control line, and a description, all left
-	// aligned and indented consistently.
-	section := func(index int, label, description, control string) string {
-		lbl := labelStyle
-		if m.FocusIndex == index {
-			lbl = labelFocused
-		}
-		var b strings.Builder
-		b.WriteString(lbl.Width(effectiveWidth).Render("  " + label))
-		b.WriteString("\n")
-		b.WriteString(lp.NewStyle().Width(effectiveWidth).Render(truncate("  "+control, effectiveWidth)))
-		b.WriteString("\n")
-		b.WriteString(descStyle.Width(effectiveWidth).Render(truncate("  "+description, effectiveWidth)))
-		b.WriteString("\n\n")
-		return b.String()
+	dividerStyle := lp.NewStyle().Foreground(lp.Color(p.Subtle))
+
+	list := m.renderList(listW)
+	detail := m.renderDetail(detailW)
+
+	if !twoColumn {
+		divider := dividerStyle.Render(strings.Repeat("─", m.contentWidth()))
+		return list + "\n" + divider + "\n" + detail
 	}
+
+	divider := dividerStyle.Render("│")
+	return joinColumns(list, detail, " "+divider+" ")
+}
+
+// contentWidth returns the width of the settings content area.
+func (m SettingsModel) contentWidth() int {
+	if m.width <= 0 {
+		return 60
+	}
+	return m.width
+}
+
+// renderList renders the left-hand list of settings, one row per setting with
+// the focused row highlighted.
+func (m SettingsModel) renderList(w int) string {
+	p := m.Style.Palette
+	base := lp.NewStyle().Foreground(lp.Color(p.Foreground))
+	selected := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+
+	rows := make([]string, 0, settingCount)
+	for i := 0; i < settingCount; i++ {
+		style := base
+		prefix := "  "
+		if i == m.FocusIndex {
+			style = selected
+			prefix = "▸ "
+		}
+		line := style.Render(truncate(prefix+settingLabel(i), w))
+		rows = append(rows, lp.NewStyle().Width(w).Render(line))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderDetail renders the right-hand detail pane for the focused setting: the
+// label, its current value (an editable input while editing), a divider, and a
+// description.
+func (m SettingsModel) renderDetail(w int) string {
+	p := m.Style.Palette
+
+	titleStyle := lp.NewStyle().Foreground(lp.Color(p.Accent)).Bold(true)
+	labelStyle := lp.NewStyle().Foreground(lp.Color(p.Muted)).Bold(true)
+	valueStyle := lp.NewStyle().Foreground(lp.Color(p.Foreground))
+	descStyle := lp.NewStyle().Foreground(lp.Color(p.Muted))
+	dividerStyle := lp.NewStyle().Foreground(lp.Color(p.Subtle))
+
+	idx := m.FocusIndex
+	if idx < 0 || idx >= settingCount {
+		idx = 0
+	}
+
+	// The pane is inset by one column on each side for breathing room.
+	contentW := w - 2
+	if contentW < 8 {
+		contentW = 8
+	}
+
+	lines := []string{
+		" " + titleStyle.Render(settingLabel(idx)),
+		"",
+		" " + m.detailValue(contentW, labelStyle, valueStyle),
+		"",
+		" " + dividerStyle.Render(strings.Repeat("─", contentW)),
+		"",
+		descStyle.Padding(0, 1).Width(w).Render(settingDescription(idx)),
+	}
+	return strings.Join(lines, "\n")
+}
+
+// detailValue renders the "Value: ..." line for the focused setting.
+func (m SettingsModel) detailValue(w int, labelStyle, valueStyle lp.Style) string {
+	label := labelStyle.Render("Value: ")
+	avail := w - width(label)
+	if avail < 8 {
+		avail = 8
+	}
+
+	switch m.FocusIndex {
+	case settingDownloadDir, settingVersionFilter:
+		if m.EditMode {
+			return label + m.Inputs[m.FocusIndex].View()
+		}
+		v := m.Inputs[m.FocusIndex].Value()
+		if strings.TrimSpace(v) == "" {
+			return label + m.Style.Muted.Render("(none)")
+		}
+		return label + valueStyle.Render(truncate(v, avail))
+	case settingBuildType:
+		return label + m.renderOptions(m.BuildTypeOptions, m.BuildType, avail)
+	case settingTheme:
+		return label + m.renderOptions(m.ThemeOptions, m.Theme, avail)
+	}
+	return label
+}
+
+// renderOptions renders a segmented control for an option setting, falling back
+// to a "< current >" marker when the options do not fit the available width.
+func (m SettingsModel) renderOptions(options []string, current string, avail int) string {
+	p := m.Style.Palette
+	active := lp.NewStyle().Padding(0, 1).Bold(true).
+		Foreground(lp.Color(p.Background)).Background(lp.Color(p.Accent))
+	inactive := lp.NewStyle().Padding(0, 1).Foreground(lp.Color(p.Muted))
 
 	var b strings.Builder
-	b.WriteString(section(0, "Download Directory",
-		"Path where Blender builds are stored.",
-		m.Inputs[0].View()))
-
-	b.WriteString(section(1, "Version Filter",
-		"Only show builds at or above this version (empty = all).",
-		m.Inputs[1].View()))
-
-	var options strings.Builder
-	for _, option := range m.BuildTypeOptions {
-		if option == m.BuildType {
-			options.WriteString(optionActive.Render(option))
+	for _, o := range options {
+		if o == current {
+			b.WriteString(active.Render(o))
 		} else {
-			options.WriteString(optionStyle.Render(option))
+			b.WriteString(inactive.Render(o))
 		}
 	}
-	b.WriteString(section(len(m.Inputs), "Build Type",
-		"Default build type to fetch from the Blender BuildBot.", options.String()))
-
-	var themeOptions strings.Builder
-	for _, option := range m.ThemeOptions {
-		if option == m.Theme {
-			themeOptions.WriteString(optionActive.Render(option))
-		} else {
-			themeOptions.WriteString(optionStyle.Render(option))
-		}
+	s := b.String()
+	if width(s) > avail {
+		return active.Render("< " + current + " >")
 	}
-	b.WriteString(section(len(m.Inputs)+1, "Theme",
-		"UI color palette (previewed immediately, saved on exit).", themeOptions.String()))
-
-	return b.String()
+	return s
 }
 
 // Update handles update messages for the settings model.
 func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Handle Tab key for directory completion
-		if m.EditMode && m.FocusIndex == 0 && msg.Type == tea.KeyTab {
+		// Esc stops editing the focused input without saving, reverting it to
+		// the value it had before editing began.
+		if m.EditMode && msg.Type == tea.KeyEsc {
+			m.cancelEdit()
+			return m, nil
+		}
+
+		// Tab completes the directory path while it is being edited.
+		if m.EditMode && m.FocusIndex == settingDownloadDir && msg.Type == tea.KeyTab {
 			return m.handleDirCompletion()
 		}
 
@@ -176,61 +334,36 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key.Matches(msg, GetKeyBinding(cmd.Type)) {
 				switch cmd.Type {
 				case CmdToggleEditMode:
-					m.EditMode = !m.EditMode
-					if m.FocusIndex < len(m.Inputs) {
-						if m.EditMode {
-							m.Inputs[m.FocusIndex].Focus()
-						} else {
-							m.Inputs[m.FocusIndex].Blur()
-						}
-					}
-					m.updateFocusStyles()
-					return m, nil
+					return m.handleToggleEdit()
 
 				case CmdMoveUp:
 					if !m.EditMode {
-						totalItems := len(m.Inputs) + 2
-						m.FocusIndex = (m.FocusIndex - 1 + totalItems) % totalItems
-						m.updateFocusStyles()
+						m.moveFocus(-1)
 						return m, nil
 					}
 
 				case CmdMoveDown:
 					if !m.EditMode {
-						totalItems := len(m.Inputs) + 2
-						m.FocusIndex = (m.FocusIndex + 1) % totalItems
-						m.updateFocusStyles()
+						m.moveFocus(1)
 						return m, nil
 					}
 
 				case CmdMoveLeft:
-					if !m.EditMode && m.FocusIndex == len(m.Inputs) {
-						m.BuildTypeIndex = (m.BuildTypeIndex - 1 + len(m.BuildTypeOptions)) % len(m.BuildTypeOptions)
-						m.BuildType = m.BuildTypeOptions[m.BuildTypeIndex]
-						return m, nil
-					}
-					if !m.EditMode && m.FocusIndex == len(m.Inputs)+1 {
-						m.ThemeIndex = (m.ThemeIndex - 1 + len(m.ThemeOptions)) % len(m.ThemeOptions)
-						m.Theme = m.ThemeOptions[m.ThemeIndex]
+					if !m.EditMode {
+						m.cycleOption(-1)
 						return m, nil
 					}
 
 				case CmdMoveRight:
-					if !m.EditMode && m.FocusIndex == len(m.Inputs) {
-						m.BuildTypeIndex = (m.BuildTypeIndex + 1) % len(m.BuildTypeOptions)
-						m.BuildType = m.BuildTypeOptions[m.BuildTypeIndex]
-						return m, nil
-					}
-					if !m.EditMode && m.FocusIndex == len(m.Inputs)+1 {
-						m.ThemeIndex = (m.ThemeIndex + 1) % len(m.ThemeOptions)
-						m.Theme = m.ThemeOptions[m.ThemeIndex]
+					if !m.EditMode {
+						m.cycleOption(1)
 						return m, nil
 					}
 				}
 			}
 		}
 
-		// Pass input to text fields
+		// Route keystrokes to the focused text field while editing.
 		if m.EditMode && m.FocusIndex < len(m.Inputs) {
 			var cmd tea.Cmd
 			m.Inputs[m.FocusIndex], cmd = m.Inputs[m.FocusIndex].Update(msg)
@@ -238,6 +371,64 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// handleToggleEdit enters/leaves edit mode for text settings, and cycles the
+// value of option settings. Enter commits the edit; Esc (handled separately)
+// discards it.
+func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
+	if m.FocusIndex >= len(m.Inputs) {
+		m.cycleOption(1)
+		return m, nil
+	}
+	if m.EditMode {
+		// Commit the edit.
+		m.EditMode = false
+		m.editBackup = ""
+		m.updateFocusStyles()
+		return m, nil
+	}
+	// Begin editing: snapshot the value so Esc can revert it.
+	m.editBackup = m.Inputs[m.FocusIndex].Value()
+	m.EditMode = true
+	m.updateFocusStyles()
+	return m, nil
+}
+
+// cancelEdit leaves edit mode and restores the focused input to the value it
+// had before editing began.
+func (m *SettingsModel) cancelEdit() {
+	if m.FocusIndex < len(m.Inputs) {
+		m.Inputs[m.FocusIndex].SetValue(m.editBackup)
+		m.Inputs[m.FocusIndex].CursorEnd()
+	}
+	m.editBackup = ""
+	m.EditMode = false
+	m.updateFocusStyles()
+}
+
+// moveFocus advances the focused row, wrapping around.
+func (m *SettingsModel) moveFocus(dir int) {
+	m.FocusIndex = (m.FocusIndex + dir + settingCount) % settingCount
+}
+
+// cycleOption advances the value of the focused option setting (Build Type or
+// Theme) in the given direction, wrapping around.
+func (m *SettingsModel) cycleOption(dir int) {
+	switch m.FocusIndex {
+	case settingBuildType:
+		if len(m.BuildTypeOptions) == 0 {
+			return
+		}
+		m.BuildTypeIndex = (m.BuildTypeIndex + dir + len(m.BuildTypeOptions)) % len(m.BuildTypeOptions)
+		m.BuildType = m.BuildTypeOptions[m.BuildTypeIndex]
+	case settingTheme:
+		if len(m.ThemeOptions) == 0 {
+			return
+		}
+		m.ThemeIndex = (m.ThemeIndex + dir + len(m.ThemeOptions)) % len(m.ThemeOptions)
+		m.Theme = m.ThemeOptions[m.ThemeIndex]
+	}
 }
 
 // updateFocusStyles applies the palette to the text inputs based on focus.
@@ -254,6 +445,20 @@ func (m *SettingsModel) updateFocusStyles() {
 			m.Inputs[i].Blur()
 			m.Inputs[i].TextStyle = base
 		}
+	}
+}
+
+// updateInputWidths sizes the text inputs to fit the detail pane.
+func (m *SettingsModel) updateInputWidths() {
+	_, detailW, _ := m.panes()
+	// Reserve room for the "Value: " label, the input prompt and cursor, plus a
+	// little slack so the input never wraps the detail line.
+	iw := detailW - width("Value: ") - 5
+	if iw < 10 {
+		iw = 10
+	}
+	for i := range m.Inputs {
+		m.Inputs[i].Width = iw
 	}
 }
 
@@ -288,13 +493,13 @@ func (m *SettingsModel) handleDirCompletion() (tea.Model, tea.Cmd) {
 
 // GetValues returns the current values from the inputs
 func (m *SettingsModel) GetValues() (downloadDir, versionFilter, buildType, theme string) {
-	return m.Inputs[0].Value(), m.Inputs[1].Value(), m.BuildType, m.Theme
+	return m.Inputs[settingDownloadDir].Value(), m.Inputs[settingVersionFilter].Value(), m.BuildType, m.Theme
 }
 
 // SetValues sets the values (e.g., when reloading config)
 func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType, theme string) {
-	m.Inputs[0].SetValue(downloadDir)
-	m.Inputs[1].SetValue(versionFilter)
+	m.Inputs[settingDownloadDir].SetValue(downloadDir)
+	m.Inputs[settingVersionFilter].SetValue(versionFilter)
 
 	m.BuildType = buildType
 	for i, opt := range m.BuildTypeOptions {
@@ -305,6 +510,11 @@ func (m *SettingsModel) SetValues(downloadDir, versionFilter, buildType, theme s
 	}
 
 	m.setTheme(theme)
+
+	// Leaving and re-entering the view must never resume in edit mode.
+	m.EditMode = false
+	m.editBackup = ""
+	m.updateFocusStyles()
 }
 
 // setTheme selects a palette by name, normalizing unknown names to the default

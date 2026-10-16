@@ -345,3 +345,158 @@ func TestSettingsSetValuesNormalizesTheme(t *testing.T) {
 		t.Fatalf("ThemeIndex %d out of sync with Theme %q", s.ThemeIndex, s.Theme)
 	}
 }
+
+func TestSettingsModalShowsListAndDetail(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+
+	out := plain(m.View())
+
+	// The list and the detail pane for the focused setting must both render.
+	if !strings.Contains(out, "Download Directory") {
+		t.Fatalf("expected the settings list in the modal:\n%s", out)
+	}
+	if !strings.Contains(out, "Value:") {
+		t.Fatalf("expected a value line in the detail pane:\n%s", out)
+	}
+	if !strings.Contains(out, "Folder where downloaded Blender builds") {
+		t.Fatalf("expected the setting description in the detail pane:\n%s", out)
+	}
+}
+
+func TestSettingsModalReplacesChrome(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+	if !strings.Contains(plain(m.View()), "Blender") {
+		t.Fatalf("list view should show the header wordmark")
+	}
+
+	m.currentView = viewSettings
+	if strings.Contains(plain(m.View()), "◈ Blender") {
+		t.Fatalf("settings modal should replace the header chrome:\n%s", plain(m.View()))
+	}
+}
+
+func TestSettingsCompactStacksPanesWhenNarrow(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(60, 24)
+
+	out := plain(m.View())
+	listLine := lineContaining(out, "Download Directory")
+	detailLine := lineContaining(out, "Folder where downloaded")
+	if listLine < 0 || detailLine < 0 {
+		t.Fatalf("expected both panes to render:\n%s", out)
+	}
+	if detailLine <= listLine {
+		t.Fatalf("detail should render below the list when stacked (list@%d detail@%d)", listLine, detailLine)
+	}
+	assertExactWidth(t, "settings-narrow", out, 60)
+}
+
+func TestSettingsEnterOnOptionCyclesWithoutEditMode(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+	m.Settings.SetValues("/tmp/blender", "", "daily", "dracula")
+
+	// Move to the Theme row and press Enter: it should cycle the value instead
+	// of entering edit mode.
+	for i := 0; i < len(m.Settings.Inputs)+1; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.Settings.EditMode {
+		t.Fatalf("option rows must not enter edit mode")
+	}
+	if m.Settings.Theme != "gruvbox" {
+		t.Fatalf("theme after Enter = %q, want gruvbox", m.Settings.Theme)
+	}
+}
+
+func TestSettingsEscStopsEditing(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+
+	// Enter edit mode on the first input and change the value.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.Settings.EditMode {
+		t.Fatalf("expected to be editing after Enter")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	if m.Settings.Inputs[0].Value() == "/tmp/original" {
+		t.Fatalf("expected typing to change the input value")
+	}
+
+	// Esc stops editing and discards the change.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.Settings.EditMode {
+		t.Fatalf("expected Esc to stop editing")
+	}
+	if m.currentView != viewSettings {
+		t.Fatalf("Esc must not leave the settings view")
+	}
+	if got := m.Settings.Inputs[0].Value(); got != "/tmp/original" {
+		t.Fatalf("Esc should revert the edit, got %q", got)
+	}
+}
+
+func TestSettingsEnterCommitsEdit(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.Settings.EditMode {
+		t.Fatalf("Enter should leave edit mode")
+	}
+	got := m.Settings.Inputs[0].Value()
+	if got == "/tmp/original" || !strings.Contains(got, "X") || len(got) != len("/tmp/original")+1 {
+		t.Fatalf("Enter should keep the edit, got %q", got)
+	}
+}
+
+func TestSettingsEditHintsShowBothEscAndEnter(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.UpdateWindowSize(120, 34)
+	m.Settings.SetValues("/tmp/original", "", "daily", "dracula")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	keys := map[string]bool{}
+	for _, h := range m.settingsHints() {
+		keys[h.key] = true
+	}
+	if !keys["esc"] || !keys["enter"] {
+		t.Fatalf("editing hints should offer both esc and enter, got %+v", m.settingsHints())
+	}
+}
+
+func TestSettingsInputsAreThemed(t *testing.T) {
+	cfg := config.Config{DownloadDir: "/tmp/x", BuildType: "daily", Theme: "nord"}
+	s := NewSettingsModel(cfg, NewStyle())
+
+	if s.Inputs[0].Prompt != "❯ " {
+		t.Fatalf("input prompt = %q, want themed prompt", s.Inputs[0].Prompt)
+	}
+	if s.Inputs[0].Value() != "/tmp/x" {
+		t.Fatalf("input value = %q, want /tmp/x", s.Inputs[0].Value())
+	}
+
+	// Entering edit mode focuses the input, which must show a visible block
+	// cursor (the cursor's Blink flag drives which style is used).
+	s.EditMode = true
+	s.FocusIndex = settingDownloadDir
+	s.updateFocusStyles()
+	if s.Inputs[0].Cursor.Blink {
+		t.Fatalf("focused input cursor should be a visible block")
+	}
+}
