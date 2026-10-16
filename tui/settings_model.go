@@ -294,8 +294,18 @@ func (m SettingsModel) renderDetail(w int) string {
 		"",
 	}
 	// Wrap the description to the pane width so longer hints (such as the
-	// version filter examples) remain visible instead of being clipped.
-	for _, dl := range wrapText(settingDescription(idx), contentW) {
+	// version filter examples) remain visible instead of being clipped. Always
+	// emit exactly two rows (padding or truncating as needed) so navigating
+	// between settings never changes the modal height and the UI does not jump.
+	descLines := wrapText(settingDescription(idx), contentW)
+	if len(descLines) > 2 {
+		descLines = descLines[:2]
+		descLines[1] = truncate(descLines[1]+"…", contentW)
+	}
+	for len(descLines) < 2 {
+		descLines = append(descLines, "")
+	}
+	for _, dl := range descLines {
 		lines = append(lines, descStyle.Padding(0, 1).Render(dl))
 	}
 	return strings.Join(lines, "\n")
