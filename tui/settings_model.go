@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -92,7 +92,7 @@ func settingDescription(i int) string {
 	case settingDownloadDir:
 		return "Folder where downloaded Blender builds are stored. Press Tab while editing to complete the path."
 	case settingVersionFilter:
-		return "Only show builds matching this version (e.g., 4.0, 3.6, or 5.x for all 5s). Defaults to 4.x. Leave empty to show all."
+		return "Only show builds at or above this version (e.g., 4.0, 3.6, or 4.x). Defaults to 4.x. Leave empty to show all."
 	case settingBuildType:
 		return "Blender channel fetched from the BuildBot: daily, experimental or patch."
 	case settingReleaseFilter:

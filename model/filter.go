@@ -8,17 +8,15 @@ import (
 	version "github.com/hashicorp/go-version"
 )
 
-// VersionFilter filters builds by version. It supports two forms:
+// VersionFilter filters builds by version, treating the configured value as the
+// minimum accepted version. Builds at or above it are kept; older builds are
+// dropped.
 //
-//   - a minimum version ("4.0"), keeping builds at or above it, and
-//   - a wildcard ("5.x"), keeping builds whose leading version components match,
-//     so "5.x" keeps every 5.* build and "5.2.x" keeps every 5.2.* build.
-//
-// "x", "X" and "*" are accepted as the wildcard token.
+// Wildcard tokens ("x", "X", "*") may be used for the "any component" form of a
+// version (e.g. "4.x"). In that form every wildcard is normalized to 0 before
+// the minimum comparison, so "4.x" means "4.0 or newer".
 type VersionFilter struct {
-	min    *version.Version
-	prefix []int // wildcard: components that must match from the front
-	wild   bool
+	min *version.Version
 }
 
 // ParseVersionFilter parses a filter string into a VersionFilter. An empty
@@ -30,15 +28,20 @@ func ParseVersionFilter(s string) (*VersionFilter, error) {
 		return nil, nil
 	}
 
-	if isWildcard(s) {
-		prefix, err := wildcardPrefix(s)
-		if err != nil {
-			return nil, err
+	comps := strings.Split(s, ".")
+	normalized := make([]string, len(comps))
+	for i, comp := range comps {
+		if isWildcardToken(comp) {
+			normalized[i] = "0"
+			continue
 		}
-		return &VersionFilter{prefix: prefix, wild: true}, nil
+		if _, err := strconv.Atoi(comp); err != nil {
+			return nil, fmt.Errorf("malformed version filter '%s': %q is not a number or wildcard", s, comp)
+		}
+		normalized[i] = comp
 	}
 
-	min, err := version.NewVersion(s)
+	min, err := version.NewVersion(strings.Join(normalized, "."))
 	if err != nil {
 		return nil, err
 	}
@@ -59,19 +62,32 @@ func (f *VersionFilter) Matches(b BlenderBuild, keepLocal bool) bool {
 	if err != nil {
 		return false
 	}
-	if f.wild {
-		segments := buildVersion.Segments()
-		if len(segments) < len(f.prefix) {
-			return false
-		}
-		for i, want := range f.prefix {
-			if segments[i] != want {
-				return false
-			}
-		}
-		return true
+	return !versionLess(buildVersion.Segments(), f.min.Segments())
+}
+
+// versionLess reports whether the left numeric version is strictly less than the
+// right one using zero-padded component comparison, so a missing component is
+// treated as 0 and pre-release metadata does not hide a build that sits at the
+// same numeric version as the minimum (e.g. "5.0.0-alpha" still passes "5.0").
+func versionLess(left, right []int) bool {
+	n := len(left)
+	if len(right) > n {
+		n = len(right)
 	}
-	return !buildVersion.LessThan(f.min)
+	for i := 0; i < n; i++ {
+		l := 0
+		if i < len(left) {
+			l = left[i]
+		}
+		r := 0
+		if i < len(right) {
+			r = right[i]
+		}
+		if l != r {
+			return l < r
+		}
+	}
+	return false
 }
 
 // Apply returns the builds that pass the filter, always keeping local and
@@ -105,15 +121,16 @@ func isWildcard(s string) bool {
 	return false
 }
 
-// wildcardPrefix returns the numeric components that precede the first wildcard
-// token. Everything from the wildcard onward is ignored, so "5.x", "5.x.y" and
-// "5.*" all yield {5}. "x" alone yields an empty prefix, which matches any build.
+// wildcardPrefix is retained for compatibility with callers that inspect the
+// legacy wildcard form; it returns the numeric components with wildcards
+// normalized to 0.
 func wildcardPrefix(s string) ([]int, error) {
 	comps := strings.Split(s, ".")
 	prefix := make([]int, 0, len(comps))
 	for _, comp := range comps {
 		if isWildcardToken(comp) {
-			break
+			prefix = append(prefix, 0)
+			continue
 		}
 		n, err := strconv.Atoi(comp)
 		if err != nil {

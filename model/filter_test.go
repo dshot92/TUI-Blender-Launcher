@@ -84,7 +84,7 @@ func TestVersionFilterWildcardMajor(t *testing.T) {
 			"5":             true, // segments shorter than the build are fine
 			"5.0.0-alpha":   true,
 			"4.2.23":        false,
-			"6.0.0":         false,
+			"6.0.0":         true,
 			"not-a-version": false,
 		}
 		for ver, want := range cases {
@@ -103,8 +103,11 @@ func TestVersionFilterWildcardMinor(t *testing.T) {
 	if !f.Matches(BlenderBuild{Version: "5.2.3"}, false) {
 		t.Error("5.2.3 should match 5.2.x")
 	}
-	if f.Matches(BlenderBuild{Version: "5.3.0"}, false) {
-		t.Error("5.3.0 should not match 5.2.x")
+	if !f.Matches(BlenderBuild{Version: "5.3.0"}, false) {
+		t.Error("5.3.0 should be at or above 5.2.x")
+	}
+	if f.Matches(BlenderBuild{Version: "5.1.9"}, false) {
+		t.Error("5.1.9 should be below 5.2.x")
 	}
 }
 
