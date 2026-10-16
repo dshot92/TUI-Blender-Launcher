@@ -71,3 +71,45 @@ func TestVersionFilterApply(t *testing.T) {
 		t.Fatalf("Apply kept %d builds, want 2 (4.2.1 + local 3.0.0)", len(got))
 	}
 }
+
+func TestVersionFilterWildcardMajor(t *testing.T) {
+	for _, expr := range []string{"5.x", "5.X", "5.*"} {
+		f, err := ParseVersionFilter(expr)
+		if err != nil {
+			t.Fatalf("ParseVersionFilter(%q): %v", expr, err)
+		}
+		cases := map[string]bool{
+			"5.4.0":         true,
+			"5.0.1":         true,
+			"5":             true, // segments shorter than the build are fine
+			"5.0.0-alpha":   true,
+			"4.2.23":        false,
+			"6.0.0":         false,
+			"not-a-version": false,
+		}
+		for ver, want := range cases {
+			if got := f.Matches(BlenderBuild{Version: ver}, false); got != want {
+				t.Errorf("%q: Matches(%q) = %v, want %v", expr, ver, got, want)
+			}
+		}
+	}
+}
+
+func TestVersionFilterWildcardMinor(t *testing.T) {
+	f, err := ParseVersionFilter("5.2.x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !f.Matches(BlenderBuild{Version: "5.2.3"}, false) {
+		t.Error("5.2.3 should match 5.2.x")
+	}
+	if f.Matches(BlenderBuild{Version: "5.3.0"}, false) {
+		t.Error("5.3.0 should not match 5.2.x")
+	}
+}
+
+func TestParseVersionFilterRejectsBadWildcard(t *testing.T) {
+	if _, err := ParseVersionFilter("5.a.x"); err == nil {
+		t.Error("a non-numeric component before the wildcard should error")
+	}
+}

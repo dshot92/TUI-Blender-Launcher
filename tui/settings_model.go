@@ -84,7 +84,7 @@ func settingDescription(i int) string {
 	case settingDownloadDir:
 		return "Folder where downloaded Blender builds are stored."
 	case settingVersionFilter:
-		return "Only show builds at or above this version (e.g., 4.0, 3.6). Leave empty to show all."
+		return "Only show builds matching this version (e.g., 4.0, 3.6, or 5.x for all 5s). Leave empty to show all."
 	case settingBuildType:
 		return "Blender channel fetched from the BuildBot: daily, experimental or patch."
 	case settingReleaseFilter:
@@ -139,7 +139,7 @@ func NewSettingsModel(cfg config.Config, style Style) SettingsModel {
 
 	m.Inputs = []textinput.Model{
 		newInput(cfg.DownloadDir, cfg.DownloadDir, 256),
-		newInput("e.g., 4.0, 3.6 (empty = none)", cfg.VersionFilter, 10),
+		newInput("e.g., 4.0 or 5.x (empty = none)", cfg.VersionFilter, 10),
 	}
 
 	// Resolve the configured build type so the selection is always valid.
