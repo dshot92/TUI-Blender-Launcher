@@ -183,3 +183,20 @@ func TestStatusMessageExpiry(t *testing.T) {
 		t.Errorf("matching clear did not wipe status: %q", m.status)
 	}
 }
+
+func TestUpdateBuildsStatusFromProgressFailed(t *testing.T) {
+	cfg := config.Config{DownloadDir: "/tmp/blender", BuildType: "daily", Theme: "dracula"}
+	m := InitialModel(cfg, false)
+	m.List.Builds = []model.BlenderBuild{
+		{Version: "4.2.0", Hash: "abcdef12", Status: model.StateOnline},
+	}
+
+	id := m.List.Builds[0].ID()
+	m.Progress.DownloadStates[id] = &model.DownloadState{BuildState: model.StateFailed}
+
+	m.updateBuildsStatusFromProgress()
+
+	if got := m.List.Builds[0].Status; got != model.StateFailed {
+		t.Fatalf("status = %v, want %v", got, model.StateFailed)
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dshot92/TUI-Blender-Launcher/config"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"io"
 	"net/http"
@@ -26,9 +25,14 @@ import (
 const DownloadingDir = ".downloading"
 const OldBuildsDir = ".oldbuilds"
 
-// Error constants
-var ErrCancelled = errors.New("operation cancelled")
-var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
+// Sentinel errors returned by the download pipeline.
+var (
+	// ErrCancelled reports that the user cancelled the operation.
+	ErrCancelled = errors.New("operation cancelled")
+	// ErrDownloadTimeout reports that a single download exceeded downloadTimeout.
+	// It is a total-transfer cap, not an idle timeout.
+	ErrDownloadTimeout = errors.New("download exceeded the time limit")
+)
 
 // versionMetaFilename is the name of the metadata file saved in the extracted directory.
 const versionMetaFilename = "version.json"
@@ -69,8 +73,9 @@ type ExtractionProgressCallback func(estimatedProgress float64)
 // builds are large; connection liveness is bounded by the transport timeouts.
 const downloadTimeout = 30 * time.Minute
 
-// downloadFile downloads a file, reporting progress via the callback.
-func downloadFile(url string, destFilePath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
+// downloadFile downloads a file, reporting progress via the callback. clientID
+// is sent as the X-Download-ID header so the server can attribute the request.
+func downloadFile(url string, destFilePath string, clientID string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
 	// Create download directory if it doesn't exist
 	downloadDir := filepath.Dir(destFilePath)
 	if err := os.MkdirAll(downloadDir, publicDirPerm); err != nil {
@@ -97,7 +102,7 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 	}
 
 	// Set headers
-	req.HTTPRequest.Header.Set("X-Download-ID", config.GetConfigInstance().UUID)
+	req.HTTPRequest.Header.Set("X-Download-ID", clientID)
 	req.HTTPRequest.Header.Set("User-Agent", "TUI-Blender-Launcher")
 
 	// Start download
@@ -131,7 +136,7 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 
 		case <-timeout.C:
 			_ = resp.Cancel()
-			return fmt.Errorf("download timed out after %s: %w", downloadTimeout, ErrIdleTimeout)
+			return fmt.Errorf("download timed out after %s: %w", downloadTimeout, ErrDownloadTimeout)
 		}
 	}
 }
@@ -809,11 +814,32 @@ func ArchiveBuildDir(downloadBaseDir, buildDir string) error {
 	return os.Rename(buildDir, filepath.Join(oldBuildsDir, oldBuildName))
 }
 
+// ReadVersionMetadata reads the build metadata written by saveVersionMetadata
+// from dirPath. It returns (nil, nil) when the directory has no metadata file,
+// and an error only when the file exists but cannot be read or parsed.
+func ReadVersionMetadata(dirPath string) (*model.BlenderBuild, error) {
+	metaPath := filepath.Join(dirPath, versionMetaFilename)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", metaPath, err)
+	}
+	var build model.BlenderBuild
+	if err := json.Unmarshal(data, &build); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", metaPath, err)
+	}
+	return &build, nil
+}
+
 // DownloadAndExtractBuild downloads (reporting via downloadCb) and extracts
-// (reporting via extractCb) a build, handling cancellation throughout.
+// (reporting via extractCb) a build, handling cancellation throughout. clientID
+// is forwarded as the download request's client identifier.
 func DownloadAndExtractBuild(
 	build model.BlenderBuild,
 	downloadBaseDir string,
+	clientID string,
 	downloadCb ProgressCallback,
 	extractCb ExtractionProgressCallback,
 	cancelCh <-chan struct{},
@@ -831,7 +857,7 @@ func DownloadAndExtractBuild(
 		_ = os.Remove(downloadPath)
 	}()
 
-	if err := downloadFile(build.DownloadURL, downloadPath, downloadCb, cancelCh); err != nil {
+	if err := downloadFile(build.DownloadURL, downloadPath, clientID, downloadCb, cancelCh); err != nil {
 		if errors.Is(err, ErrCancelled) {
 			return "", ErrCancelled // Propagate cancellation error
 		}
@@ -846,7 +872,7 @@ func DownloadAndExtractBuild(
 		// Continue
 	}
 
-	// 1b. Verify the archive against the API checksum when one is available.
+	// 2. Verify the archive against the API checksum when one is available.
 	// A mismatch aborts the download; an unavailable checksum is skipped.
 	if build.ChecksumURL != "" {
 		if _, err := verifyChecksum(downloadPath, build.ChecksumURL, cancelCh); err != nil {
@@ -857,20 +883,26 @@ func DownloadAndExtractBuild(
 		}
 	}
 
-	// 2. The archive contains a root directory, we'll extract directly to downloadBaseDir
-	// Look for any existing directory with this build version
+	// 3. Extract. Archives contain a single root directory, so we extract
+	// directly into downloadBaseDir. First locate any existing extraction of the
+	// same build (matched by its version.json metadata, not by directory name)
+	// so it can be archived once the new copy is in place.
 	var existingBuildDir string
-	entries, err := os.ReadDir(downloadBaseDir)
-	if err == nil {
-		// Find any directories that might contain this version
-		version := build.Version
+	if entries, err := os.ReadDir(downloadBaseDir); err == nil {
 		for _, entry := range entries {
-			if entry.IsDir() && entry.Name() != DownloadingDir && entry.Name() != OldBuildsDir {
-				// Check if this directory contains the version we're downloading
-				if strings.Contains(entry.Name(), version) {
-					existingBuildDir = filepath.Join(downloadBaseDir, entry.Name())
-					break
-				}
+			if !entry.IsDir() || entry.Name() == DownloadingDir || entry.Name() == OldBuildsDir {
+				continue
+			}
+			dirPath := filepath.Join(downloadBaseDir, entry.Name())
+			info, err := ReadVersionMetadata(dirPath)
+			if err != nil || info == nil {
+				continue
+			}
+			if info.Version == build.Version &&
+				info.Branch == build.Branch &&
+				info.ReleaseCycle == build.ReleaseCycle {
+				existingBuildDir = dirPath
+				break
 			}
 		}
 	}

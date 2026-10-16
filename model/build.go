@@ -70,10 +70,10 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 		}
 	}
 
-	// If neither worked, it might be an object, we'll use current time
-	// This is a fallback to prevent breaking the whole program
-	*t = Timestamp(time.Now())
-	return nil
+	// Neither an integer Unix timestamp nor an RFC3339 string: reject the value
+	// rather than silently substituting the current time, which would make
+	// malformed data look freshly built.
+	return fmt.Errorf("unsupported timestamp value %s", string(b))
 }
 
 // MarshalJSON implements the json.Marshaler interface for Timestamp.

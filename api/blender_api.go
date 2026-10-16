@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/dshot92/TUI-Blender-Launcher/config"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"net/http"
 	"runtime"
@@ -48,18 +47,13 @@ type FetchOptions struct {
 	VersionFilter string
 	BuildType     string
 	ReleaseTypes  []string // release_cycle values to keep; empty = all
+	UUID          string   // client identifier sent as X-Client-UUID
 }
 
 // FetchBuilds fetches the list of Blender builds from the official API,
 // filtering for the current OS/architecture, file extensions, release cycle,
 // and minimum version.
 func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
-	// Get config
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
 	// Determine which API URL to use based on the build type, defaulting to
 	// daily builds if the value is unknown.
 	apiURL, ok := buildTypeURLs[model.ParseBuildType(opts.BuildType)]
@@ -72,7 +66,7 @@ func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("X-Client-UUID", cfg.UUID)
+	req.Header.Set("X-Client-UUID", opts.UUID)
 
 	// Resolve the HTTP client lazily so tests can override http.DefaultClient
 	// after NewAPI() has been called.

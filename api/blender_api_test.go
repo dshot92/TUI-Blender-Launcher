@@ -16,8 +16,8 @@ func TestFetchBuilds(t *testing.T) {
 	// Setup a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify UUID header
-		if uuid := r.Header.Get("X-Client-UUID"); uuid == "" {
-			t.Errorf("Expected X-Client-UUID header, got none")
+		if uuid := r.Header.Get("X-Client-UUID"); uuid != "test-uuid" {
+			t.Errorf("X-Client-UUID = %q, want %q", uuid, "test-uuid")
 		}
 
 		// Check the request method and path
@@ -187,6 +187,7 @@ func TestFetchBuilds(t *testing.T) {
 				VersionFilter: tc.versionFilter,
 				BuildType:     tc.buildType,
 				ReleaseTypes:  tc.releaseTypes,
+				UUID:          "test-uuid",
 			})
 
 			// Check error result

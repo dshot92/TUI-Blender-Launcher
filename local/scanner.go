@@ -1,7 +1,6 @@
 package local
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/dshot92/TUI-Blender-Launcher/download"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
@@ -14,27 +13,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const versionMetaFilename = "version.json"
-
-// ReadBuildInfo reads build information from version.json in the given directory.
-// Returns nil if version.json does not exist.
+// ReadBuildInfo reads build information from version.json in the given
+// directory. Returns nil if version.json does not exist.
 func ReadBuildInfo(dirPath string) (*model.BlenderBuild, error) {
-	metaPath := filepath.Join(dirPath, versionMetaFilename)
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to read %s: %w", metaPath, err)
-	}
-
-	var build model.BlenderBuild
-	if err := json.Unmarshal(data, &build); err != nil {
-		return nil, fmt.Errorf("failed to parse %s: %w", metaPath, err)
+	build, err := download.ReadVersionMetadata(dirPath)
+	if err != nil || build == nil {
+		return build, err
 	}
 	build.Status = model.StateLocal
 	build.FileName = filepath.Base(dirPath)
-	return &build, nil
+	return build, nil
 }
 
 // ScanLocalBuilds scans the download directory for local Blender builds using version.json.

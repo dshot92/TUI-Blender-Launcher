@@ -5,7 +5,6 @@ import (
 	"github.com/dshot92/TUI-Blender-Launcher/launch"
 	"github.com/dshot92/TUI-Blender-Launcher/local"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -686,7 +685,7 @@ func (m *Model) updateBuildsStatusFromProgress() {
 				m.List.Builds[i].Status = state.BuildState
 			} else if state.BuildState == model.StateLocal {
 				m.List.Builds[i].Status = model.StateLocal
-			} else if strings.HasPrefix(state.BuildState.String(), "Failed") {
+			} else if state.BuildState == model.StateFailed {
 				m.List.Builds[i].Status = model.StateFailed
 			}
 		}

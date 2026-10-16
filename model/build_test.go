@@ -66,3 +66,35 @@ func TestFormatByteSize(t *testing.T) {
 		}
 	}
 }
+
+func TestTimestampUnmarshalJSON(t *testing.T) {
+	t.Run("unix seconds", func(t *testing.T) {
+		var ts Timestamp
+		if err := ts.UnmarshalJSON([]byte("1633046400")); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got, want := ts.Time().Unix(), int64(1633046400); got != want {
+			t.Fatalf("got %d, want %d", got, want)
+		}
+	})
+
+	t.Run("rfc3339 string", func(t *testing.T) {
+		var ts Timestamp
+		if err := ts.UnmarshalJSON([]byte(`"2021-10-01T00:00:00Z"`)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got, want := ts.Time().UTC().Format("2006-01-02T15:04:05Z"), "2021-10-01T00:00:00Z"; got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("malformed value is rejected", func(t *testing.T) {
+		var ts Timestamp
+		if err := ts.UnmarshalJSON([]byte(`"not-a-timestamp"`)); err == nil {
+			t.Fatal("expected an error for a malformed timestamp")
+		}
+		if !ts.Time().IsZero() {
+			t.Fatalf("timestamp should stay zero on error, got %v", ts.Time())
+		}
+	})
+}

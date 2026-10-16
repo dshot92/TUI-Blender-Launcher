@@ -149,7 +149,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			})
 		}
 
-		_, err := download.DownloadAndExtractBuild(build, downloadDir, downloadCb, extractCb, cancelCh)
+		_, err := download.DownloadAndExtractBuild(build, downloadDir, dm.cfg.UUID, downloadCb, extractCb, cancelCh)
 
 		// Final state transition.
 		dm.mu.Lock()
@@ -253,6 +253,7 @@ func (c *Commands) FetchBuilds() tea.Cmd {
 			VersionFilter: c.cfg.VersionFilter,
 			BuildType:     c.cfg.BuildType,
 			ReleaseTypes:  c.cfg.ReleaseTypes,
+			UUID:          c.cfg.UUID,
 		})
 		return buildsFetchedMsg{builds, err}
 	}
