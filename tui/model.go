@@ -38,9 +38,11 @@ type Model struct {
 	// Layout, recomputed whenever the terminal or view changes.
 	layout layoutInfo
 
-	// Cached column layout, rebuilt only when the column area width changes.
-	columns      []ColumnConfig
-	columnsWidth int
+	// Cached column layout, rebuilt when the column area width or the desired
+	// column widths change.
+	columns        []ColumnConfig
+	columnsWidth   int
+	columnsDesired []int
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -98,6 +100,10 @@ type layoutInfo struct {
 	colWidth   int
 	listRows   int
 
+	// columnDesired caches the per-column widths needed to avoid truncation for
+	// the current data, so the column build below can reuse them.
+	columnDesired []int
+
 	settingsWidth int
 }
 
@@ -122,15 +128,22 @@ func (m *Model) computeLayout() {
 	const minDetailHeight = 5
 	minBuildsHeight := boxBorderFrameHeight + 1 + 2 // borders + header + 2 data rows
 
+	// Widths each column needs to show its values without clipping. The builds
+	// pane is only placed beside the detail pane while the table still fits in
+	// full, so nothing truncates just to make room for the info panel.
+	desired := columnDesiredWidths(m.List.Builds, m.List.SortColumn)
+	li.columnDesired = desired
+	fitColWidth := columnsFitWidth(desired)
+
 	li.listBoxWidth = w
 	li.listBoxHeight = li.bodyHeight
 
 	if m.detailShown {
-		// Prefer a side-by-side split when there is enough lateral room.
+		// Prefer a side-by-side split while the table still fits in full.
 		if w >= minDetailWidth {
 			left := int(float64(w) * (1 - detailRatio))
 			right := w - left - paneGap
-			if right >= 30 {
+			if right >= 30 && colWidthForBox(left) >= fitColWidth {
 				li.detailVisible = true
 				li.detailStacked = false
 				li.listBoxWidth = left
@@ -163,15 +176,8 @@ func (m *Model) computeLayout() {
 		li.detailBoxHeight = li.bodyHeight
 	}
 
-	innerWidth := li.listBoxWidth - boxBorderFrameWidth
-	if innerWidth < 3 {
-		innerWidth = 3
-	}
-	li.tableWidth = innerWidth - 2*panePadX
-	if li.tableWidth < gutterWidth+1 {
-		li.tableWidth = gutterWidth + 1
-	}
-	li.colWidth = li.tableWidth - gutterWidth
+	li.colWidth = colWidthForBox(li.listBoxWidth)
+	li.tableWidth = li.colWidth + gutterWidth
 	li.listRows = li.listBoxHeight - boxBorderFrameHeight - 1
 	if li.listRows < 1 {
 		li.listRows = 1
@@ -242,14 +248,48 @@ func (m *Model) View() string {
 	return m.renderPageForView()
 }
 
-// columnsLayout returns the cached table columns, rebuilding them only when
-// the column area width changes. Avoids rebuilding lipgloss styles every render.
+// columnsLayout returns the cached table columns, rebuilding them only when the
+// column area width or the desired column widths change. Avoids rebuilding
+// lipgloss styles every render.
 func (m *Model) columnsLayout() []ColumnConfig {
-	if m.columns == nil || m.columnsWidth != m.layout.colWidth {
-		m.columns = GetBuildColumns(m.layout.colWidth)
+	desired := m.layout.columnDesired
+	if desired == nil {
+		desired = columnDesiredWidths(m.List.Builds, m.List.SortColumn)
+	}
+	if m.columns == nil || m.columnsWidth != m.layout.colWidth || !equalInts(m.columnsDesired, desired) {
+		m.columns = GetBuildColumns(m.layout.colWidth, desired)
 		m.columnsWidth = m.layout.colWidth
+		m.columnsDesired = desired
 	}
 	return m.columns
+}
+
+// colWidthForBox returns the column area width available inside a builds pane of
+// the given box width (excluding borders, pane padding, and the selection
+// gutter).
+func colWidthForBox(boxWidth int) int {
+	inner := boxWidth - boxBorderFrameWidth
+	if inner < 3 {
+		inner = 3
+	}
+	tw := inner - 2*panePadX
+	if tw < gutterWidth+1 {
+		tw = gutterWidth + 1
+	}
+	return tw - gutterWidth
+}
+
+// equalInts reports whether two int slices have identical contents.
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Proxy methods for compatibility/convenience if needed,

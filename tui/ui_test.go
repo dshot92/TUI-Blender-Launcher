@@ -107,6 +107,23 @@ func TestDetailPaneSideBySideWhenWide(t *testing.T) {
 	}
 }
 
+func TestDetailPaneStacksWhenSplitWouldClipTable(t *testing.T) {
+	// 110 cols leaves the split table too narrow to show every value, so the
+	// info panel must dock below rather than squeeze the table.
+	m := sampleModel()
+	m.UpdateWindowSize(110, 30)
+	if !m.layout.detailStacked {
+		t.Fatalf("want stacked when the split would clip (stacked=%v visible=%v)",
+			m.layout.detailStacked, m.layout.detailVisible)
+	}
+
+	// Widening enough for the table to fit restores the side-by-side layout.
+	m.UpdateWindowSize(160, 40)
+	if m.layout.detailStacked {
+		t.Fatalf("want side-by-side once the table fits (stacked=%v)", m.layout.detailStacked)
+	}
+}
+
 func TestDetailPaneStacksWhenNarrow(t *testing.T) {
 	m := sampleModel()
 	m.UpdateWindowSize(90, 30)
@@ -189,11 +206,42 @@ func TestGradientTextPreservesWidth(t *testing.T) {
 }
 
 func TestGetBuildColumnsSumToWidth(t *testing.T) {
+	desired := []int{9, 13, 8, 7, 12, 8, 16}
 	for _, w := range []int{39, 60, 100, 160} {
-		cols := GetBuildColumns(w)
+		cols := GetBuildColumns(w, desired)
 		if got := sumColumnWidths(cols); got != w {
 			t.Errorf("GetBuildColumns(%d) sum = %d", w, got)
 		}
+	}
+}
+
+func TestColumnFitAvoidsTruncation(t *testing.T) {
+	builds := sampleModel().List.Builds
+	desired := columnDesiredWidths(builds, 0)
+	fit := columnsFitWidth(desired)
+
+	// At the fit width no column is narrower than it needs to be.
+	for i, col := range GetBuildColumns(fit, desired) {
+		if col.Width < desired[i] {
+			t.Errorf("at fit=%d, column %s width %d < desired %d", fit, col.Name, col.Width, desired[i])
+		}
+	}
+
+	// One cell narrower and at least one column must truncate.
+	clipped := false
+	for i, col := range GetBuildColumns(fit-1, desired) {
+		if col.Width < desired[i] {
+			clipped = true
+			break
+		}
+	}
+	if !clipped {
+		t.Fatalf("expected truncation at fit-1=%d", fit-1)
+	}
+
+	// The builds pane must fill exactly the requested column width.
+	if got := sumColumnWidths(GetBuildColumns(fit+7, desired)); got != fit+7 {
+		t.Errorf("widths should fill requested area, got %d want %d", got, fit+7)
 	}
 }
 

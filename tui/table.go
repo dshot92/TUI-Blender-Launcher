@@ -3,6 +3,7 @@ package tui
 import (
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"math"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
@@ -32,23 +33,17 @@ func NewRow(build model.BlenderBuild, isSelected bool, status *model.DownloadSta
 	}
 }
 
-// columnConfig describes how a column participates in width distribution.
-// Lower priority numbers are conceptually more important; the field documents
-// the intended ordering should we ever need to hide columns on narrow screens.
-type columnConfig struct {
-	priority int
-	flex     float64
-}
+// buildColumnNames lists the table columns in display order. A column's
+// position in this slice is its Index and sort key.
+var buildColumnNames = []string{"Version", "Status", "Branch", "Type", "Hash", "Size", "Build Date"}
 
-var columnConfigs = map[string]columnConfig{
-	"Version":    {priority: 1, flex: 1.0},
-	"Status":     {priority: 2, flex: 1.0},
-	"Build Date": {priority: 3, flex: 1.0},
-	"Type":       {priority: 4, flex: 1.0},
-	"Branch":     {priority: 5, flex: 1.0},
-	"Hash":       {priority: 6, flex: 1.0},
-	"Size":       {priority: 7, flex: 1.0},
-}
+// branchColumn is the index of the Branch column, whose cell is reused for the
+// live download speed / extract percentage while a transfer is in progress.
+const branchColumn = 2
+
+// downloadCellWidth is the width reserved for that live cell, e.g.
+// " 999.9 MB/s", so an in-progress row never clips its speed.
+const downloadCellWidth = 11
 
 // ColumnConfig represents the configuration for a table column.
 type ColumnConfig struct {
@@ -59,44 +54,145 @@ type ColumnConfig struct {
 	Style func(string) string
 }
 
+// columnDesiredWidths returns, for each column in display order, the width
+// needed to show its header and every value in builds without truncation. The
+// sorted column's header reserves two extra cells for the ↑/↓ marker.
+func columnDesiredWidths(builds []model.BlenderBuild, sortColumn int) []int {
+	desired := make([]int, len(buildColumnNames))
+	for i, name := range buildColumnNames {
+		desired[i] = width(name)
+		if i == sortColumn {
+			desired[i] += 2 // " ↑" / " ↓"
+		}
+	}
+
+	consider := func(i int, s string) {
+		if w := width(s); w > desired[i] {
+			desired[i] = w
+		}
+	}
+
+	for _, b := range builds {
+		consider(0, b.Version)
+		consider(1, stateGlyph(b.Status)+" "+b.Status.String())
+		consider(branchColumn, b.Branch)
+		consider(3, b.ReleaseCycle)
+		consider(4, b.Hash)
+		consider(5, model.FormatByteSize(b.Size))
+		consider(6, model.FormatBuildDate(b.BuildDate))
+	}
+
+	// The Branch cell doubles as the live download speed / extract percentage
+	// while a transfer is running, so reserve enough room for it.
+	if desired[branchColumn] < downloadCellWidth {
+		desired[branchColumn] = downloadCellWidth
+	}
+
+	return desired
+}
+
+// columnsFitWidth is the minimum column area width that shows every header and
+// cell in full given the per-column desired widths.
+func columnsFitWidth(desired []int) int {
+	sum := 0
+	for _, d := range desired {
+		if d < 1 {
+			d = 1
+		}
+		sum += d
+	}
+	return sum
+}
+
 // GetBuildColumns builds the column layout for a given column area width
-// (excluding the selection gutter and pane padding). Widths always sum to
-// exactly the supplied width.
-func GetBuildColumns(colWidth int) []ColumnConfig {
-	columns := []ColumnConfig{
-		{Name: "Version", Key: "Version", Index: 0},
-		{Name: "Status", Key: "Status", Index: 1},
-		{Name: "Branch", Key: "Branch", Index: 2},
-		{Name: "Type", Key: "Type", Index: 3},
-		{Name: "Hash", Key: "Hash", Index: 4},
-		{Name: "Size", Key: "Size", Index: 5},
-		{Name: "Build Date", Key: "Build Date", Index: 6},
-	}
+// (excluding the selection gutter and pane padding) and the per-column desired
+// widths. Widths always sum to exactly colWidth and, whenever colWidth is at
+// least the sum of desired, no column is narrower than it needs to be.
+func GetBuildColumns(colWidth int, desired []int) []ColumnConfig {
+	widths := allocateWidths(colWidth, desired)
 
-	totalFlex := 0.0
-	for i := range columns {
-		totalFlex += columnConfigs[columns[i].Key].flex
-	}
-
-	used := 0
-	for i := range columns {
-		colW := int(float64(colWidth) * columnConfigs[columns[i].Key].flex / totalFlex)
-		if i == len(columns)-1 {
-			colW = colWidth - used
+	columns := make([]ColumnConfig, len(buildColumnNames))
+	for i, name := range buildColumnNames {
+		w := widths[i]
+		columns[i] = ColumnConfig{
+			Name:  name,
+			Key:   name,
+			Index: i,
+			Width: w,
+			Style: func(w int) func(string) string {
+				return func(s string) string {
+					return lp.NewStyle().Align(lp.Center).Width(w).Render(truncate(s, w))
+				}
+			}(w),
 		}
-		if colW < 1 {
-			colW = 1
-		}
-		columns[i].Width = colW
-		used += colW
-		columns[i].Style = func(w int) func(string) string {
-			return func(s string) string {
-				return lp.NewStyle().Align(lp.Center).Width(w).Render(truncate(s, w))
-			}
-		}(colW)
 	}
 
 	return columns
+}
+
+// allocateWidths distributes colWidth across columns proportionally to desired,
+// guaranteeing the result sums to exactly colWidth. When there is enough room,
+// each column receives at least its desired width and the surplus is shared.
+func allocateWidths(colWidth int, desired []int) []int {
+	n := len(desired)
+	if n == 0 {
+		return nil
+	}
+	if colWidth < n {
+		colWidth = n
+	}
+
+	total := 0
+	for _, d := range desired {
+		if d < 1 {
+			d = 1
+		}
+		total += d
+	}
+
+	widths := make([]int, n)
+	remainders := make([]float64, n)
+	assigned := 0
+	for i, d := range desired {
+		if d < 1 {
+			d = 1
+		}
+		exact := float64(colWidth) * float64(d) / float64(total)
+		base := int(math.Floor(exact))
+		if base < 1 {
+			base = 1
+		}
+		widths[i] = base
+		assigned += base
+		remainders[i] = exact - math.Floor(exact)
+	}
+
+	// Hand out any leftover cells to the largest fractional parts first.
+	for diff := colWidth - assigned; diff > 0; diff-- {
+		best := 0
+		for i := 1; i < n; i++ {
+			if remainders[i] > remainders[best] {
+				best = i
+			}
+		}
+		widths[best]++
+		remainders[best] = -1
+	}
+	// Reclaim cells if the per-column minimum pushed us over budget.
+	for diff := colWidth - assigned; diff < 0; diff++ {
+		best := -1
+		for i := 0; i < n; i++ {
+			if widths[i] > 1 && (best == -1 || widths[i] > widths[best]) {
+				best = i
+			}
+		}
+		if best == -1 {
+			break
+		}
+		widths[best]--
+	}
+
+	return widths
 }
 
 func sumColumnWidths(columns []ColumnConfig) int {

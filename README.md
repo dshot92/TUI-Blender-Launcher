@@ -122,7 +122,7 @@ The application uses keyboard shortcuts for navigation:
 - <kbd>d</kbd>: Download selected build (only for online/update builds)
 
 - <kbd>r</kbd>: Reverse sort order
-- <kbd>Tab</kbd>: Show/hide the build info panel (docks below the list on narrow terminals)
+- <kbd>Tab</kbd>: Show/hide the build info panel (docks below the list whenever there isn't room to show every column in full)
 - <kbd>s</kbd>: Settings
 - <kbd>q</kbd>: Quit application
 
