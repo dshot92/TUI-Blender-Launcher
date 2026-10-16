@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/local"
-	"TUI-Blender-Launcher/model"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/local"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"slices"
 	"strings"
 	"time"

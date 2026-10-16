@@ -1,4 +1,4 @@
-module TUI-Blender-Launcher
+module github.com/dshot92/TUI-Blender-Launcher
 
 go 1.23.5
 

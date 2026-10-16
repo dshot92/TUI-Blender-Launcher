@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"time"
 )
 

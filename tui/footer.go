@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/download"
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/download"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"os"
 	"path/filepath"
 	"strings"

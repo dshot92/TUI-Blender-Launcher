@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 // Palette holds the semantic colors used across the TUI. Keeping them in one

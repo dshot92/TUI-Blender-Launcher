@@ -1,8 +1,6 @@
 package download
 
 import (
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
 	"archive/tar"
 	"archive/zip"
 	"bufio"
@@ -11,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"io"
 	"net/http"
 	"os"

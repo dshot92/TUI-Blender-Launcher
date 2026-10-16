@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"

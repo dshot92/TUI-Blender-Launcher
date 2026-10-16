@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 func TestAllowedArch(t *testing.T) {

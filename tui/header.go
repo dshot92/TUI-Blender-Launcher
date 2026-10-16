@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"

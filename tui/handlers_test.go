@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 func newTestModel(versionFilter string, builds []model.BlenderBuild) *Model {

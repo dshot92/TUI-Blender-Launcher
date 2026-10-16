@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

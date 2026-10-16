@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"TUI-Blender-Launcher/download"
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/download"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 // writeBuild creates a fake extracted build directory containing version.json.

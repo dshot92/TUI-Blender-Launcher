@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
 )
 
 // Model represents the state of the TUI application.

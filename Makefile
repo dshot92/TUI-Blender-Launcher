@@ -1,20 +1,24 @@
-BIN := $(HOME)/.local/bin/TUI-Blender-Launcher
+BIN := $(HOME)/.local/bin/tui-blender-launcher
+BUILD_BIN := tui-blender-launcher
 
-.PHONY: build install run uninstall test lint vet fmt
+.PHONY: build install run uninstall test lint vet fmt release-check
 
 build:
-	go build
+	go build -o $(BUILD_BIN) .
 
 install: build
 	mkdir -p $(dir $(BIN))
 	rm -f $(BIN)
-	ln -s $(PWD)/TUI-Blender-Launcher $(BIN)
+	ln -s $(PWD)/$(BUILD_BIN) $(BIN)
 
 run: install
 	$(BIN)
 
 uninstall:
-	rm $(BIN)
+	rm -f $(BIN)
+
+release-check:
+	goreleaser check
 
 fmt:
 	gofmt -w .

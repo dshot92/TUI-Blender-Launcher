@@ -1,13 +1,13 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/api"
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/download"
-	"TUI-Blender-Launcher/local"
-	"TUI-Blender-Launcher/model"
 	"errors"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/api"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/download"
+	"github.com/dshot92/TUI-Blender-Launcher/local"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"os"
 	"path/filepath"
 	"sync"

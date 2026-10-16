@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

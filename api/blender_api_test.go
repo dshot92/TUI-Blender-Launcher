@@ -1,8 +1,8 @@
 package api
 
 import (
-	"TUI-Blender-Launcher/model"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"net/http"
 	"net/http/httptest"
 	"testing"

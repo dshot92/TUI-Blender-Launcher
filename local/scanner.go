@@ -1,10 +1,10 @@
 package local
 
 import (
-	"TUI-Blender-Launcher/download"
-	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/download"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"os"
 	"os/exec"
 	"path/filepath"

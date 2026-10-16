@@ -3,7 +3,7 @@ package api
 import (
 	"strings"
 
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
 // allowedExtensions is the set of file extensions we consider downloadable

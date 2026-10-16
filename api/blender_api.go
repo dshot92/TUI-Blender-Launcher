@@ -1,10 +1,10 @@
 package api
 
 import (
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/config"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"net/http"
 	"runtime"
 	"strings"
