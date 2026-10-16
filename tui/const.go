@@ -128,6 +128,15 @@ func GetKeyBinding(cmdType CommandType) key.Binding {
 	return key.NewBinding(key.WithKeys(keys...))
 }
 
+// PrimaryKey returns the first configured key for a command type (used for
+// rendering footer hints), or "" when the command has no binding.
+func PrimaryKey(cmdType CommandType) string {
+	if keys := GetKeyBinding(cmdType).Keys(); len(keys) > 0 {
+		return keys[0]
+	}
+	return ""
+}
+
 // GetCommandsForView returns all commands available for a specific view
 func GetCommandsForView(view viewState) []KeyCommand {
 	result := make([]KeyCommand, len(CommonCommands))

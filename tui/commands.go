@@ -6,16 +6,13 @@ import (
 	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
-	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/cavaliergopher/grab/v3"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -55,14 +52,10 @@ func (dm *DownloadManager) GetAllStates() map[string]*model.DownloadState {
 // StartDownload begins a new download for a build
 func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	// Create a unique build ID
-	buildID := build.Version
-	if build.Hash != "" {
-		buildID = build.Version + "-" + build.Hash[:8]
-	}
+	buildID := build.ID()
 
 	// Lock access to states map to prevent race conditions
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
 
 	// Clean up previous state if it was Failed or Cancelled before starting anew
 	if state, exists := dm.states[buildID]; exists {
@@ -71,6 +64,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			delete(dm.states, buildID)
 		} else if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
 			// If already downloading/extracting this exact build, don't start another one
+			dm.mu.Unlock()
 			return nil
 		}
 	}
@@ -78,7 +72,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	// Setup download state
 	now := time.Now()
 	cancelCh := make(chan struct{})
-	downloadState := &model.DownloadState{
+	dm.states[buildID] = &model.DownloadState{
 		BuildID:     buildID,
 		BuildState:  model.StateDownloading,
 		StartTime:   now,
@@ -86,265 +80,89 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		Progress:    0.0,
 		CancelCh:    cancelCh,
 	}
-	dm.states[buildID] = downloadState
 
 	// Create a temporary directory for downloads if it doesn't exist
 	downloadTempDir := filepath.Join(dm.cfg.DownloadDir, download.DownloadingDir)
 	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
-		// Handle error creating download directory
-		downloadState.BuildState = model.StateFailed
+		dm.states[buildID].BuildState = model.StateFailed
+		dm.mu.Unlock()
 		programCh <- downloadCompleteMsg{
 			buildVersion: build.Version,
 			err:          fmt.Errorf("failed to create download directory: %w", err),
 		}
 		return nil
 	}
+	dm.mu.Unlock()
 
-	// Start the download in a goroutine
+	// Download and extract in a single background path.
 	go func() {
-		// Get the filename from the download URL
-		downloadFileName := filepath.Base(build.DownloadURL)
-		downloadPath := filepath.Join(downloadTempDir, downloadFileName)
-
-		// Set up the grab library context for cancellation
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		// Create a go routine to handle cancellation via our channel
-		go func() {
+		// updateSnapshot applies a state transition under the manager lock.
+		updateSnapshot := func(fn func(*model.DownloadState)) {
+			dm.mu.Lock()
+			defer dm.mu.Unlock()
+			state := dm.states[buildID]
+			if state == nil {
+				return
+			}
+			// Skip UI updates once cancellation has been requested.
 			select {
 			case <-cancelCh:
-				cancel() // Cancel grab request if our channel is closed
-			case <-ctx.Done():
-				// Context done normally
+				return
+			default:
 			}
-		}()
-
-		// Create the grab client with extended timeouts
-		client := grab.NewClient()
-		client.UserAgent = "TUI-Blender-Launcher"
-
-		// Set custom HTTP client with timeouts
-		httpClient := &http.Client{
-			Timeout: 5 * time.Minute,
-			Transport: &http.Transport{
-				IdleConnTimeout:     2 * time.Minute,
-				DisableCompression:  false,
-				TLSHandshakeTimeout: 1 * time.Minute,
-			},
+			fn(state)
 		}
-		client.HTTPClient = httpClient
 
-		// Create the request
-		req, err := grab.NewRequest(downloadPath, build.DownloadURL)
-		if err != nil {
-			dm.mu.Lock()
-			if state := dm.states[buildID]; state != nil {
-				state.BuildState = model.StateFailed
-				state.Progress = 0.0
+		downloadCb := func(downloaded, total int64, speed float64) {
+			if total <= 0 {
+				return
 			}
-			dm.mu.Unlock()
-			programCh <- downloadCompleteMsg{
-				buildVersion: build.Version,
-				err:          fmt.Errorf("failed to create download request: %w", err),
-			}
-			return
-		}
-		req = req.WithContext(ctx)
-
-		// Start download
-		resp := client.Do(req)
-
-		// Use a ticker to update the download state
-		var lastBytes int64
-		var lastTime time.Time
-		var speedSamples []float64
-		var speed float64
-		var speedUpdateCounter int
-
-		// Use a slightly longer interval for UI updates to reduce flickering
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-
-	downloadLoop:
-		for {
-			select {
-			case <-ticker.C:
-				// Update download state with grab response status
-				now := time.Now()
-				dm.mu.Lock()
-				state := dm.states[buildID]
-				if state == nil {
-					dm.mu.Unlock()
-					break downloadLoop // State was deleted, exit loop
-				}
-
-				downloaded := resp.BytesComplete()
-				total := resp.Size()
-
-				// Calculate progress percentage
-				percent := 0.0
-				if total > 0 {
-					percent = float64(downloaded) / float64(total)
-				}
-
-				// Calculate download speed with moving average for smoothing
-				if !lastTime.IsZero() {
-					// Only update speed calculation every 2 ticks to further reduce fluctuations
-					speedUpdateCounter++
-					if speedUpdateCounter >= 2 {
-						speedUpdateCounter = 0
-
-						bytesDiff := downloaded - lastBytes
-						timeDiff := now.Sub(lastTime).Seconds()
-
-						// Calculate current sample
-						currentSpeed := float64(bytesDiff) / timeDiff
-
-						// Add to samples for moving average (keep last 3 samples)
-						speedSamples = append(speedSamples, currentSpeed)
-						if len(speedSamples) > 3 {
-							speedSamples = speedSamples[1:]
-						}
-
-						// Calculate average speed from samples
-						speed = 0
-						for _, s := range speedSamples {
-							speed += s
-						}
-						speed /= float64(len(speedSamples))
-
-						lastBytes = downloaded
-						lastTime = now
-					}
-				} else if lastTime.IsZero() {
-					lastBytes = downloaded
-					lastTime = now
-				}
-
-				// Update state
-				state.LastUpdated = now
-				state.Progress = percent
+			updateSnapshot(func(state *model.DownloadState) {
+				state.BuildState = model.StateDownloading
+				state.LastUpdated = time.Now()
+				state.Progress = float64(downloaded) / float64(total)
 				state.Current = downloaded
 				state.Total = total
 				state.Speed = speed
-				dm.mu.Unlock()
+			})
+		}
 
-			case <-resp.Done:
-				// Download completed or failed
-				if err := resp.Err(); err != nil {
-					// Handle download error
-					dm.mu.Lock()
-					state := dm.states[buildID]
-					if state != nil {
-						// Check if this was a cancellation
-						if errors.Is(err, context.Canceled) {
-							state.BuildState = model.StateCancelled
-						} else {
-							state.BuildState = model.StateFailed
-							state.Progress = 0.0
-						}
-					}
-					dm.mu.Unlock()
+		extractCb := func(progress float64) {
+			updateSnapshot(func(state *model.DownloadState) {
+				state.BuildState = model.StateExtracting
+				state.LastUpdated = time.Now()
+				state.Progress = progress
+				state.Speed = 0
+			})
+		}
 
-					// Clean up partial download
-					go func() {
-						time.Sleep(500 * time.Millisecond) // Brief delay to allow UI update
-						_ = os.RemoveAll(downloadPath)
-					}()
+		extractedPath, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, downloadCb, extractCb, cancelCh)
 
-					programCh <- downloadCompleteMsg{
-						buildVersion: build.Version,
-						err:          err,
-					}
-					return
-				}
-
-				// Download completed successfully, now proceed to extraction
-				dm.mu.Lock()
-				state := dm.states[buildID]
-				if state != nil {
-					state.BuildState = model.StateExtracting
-					state.Progress = 0.0 // Reset progress for extraction phase
-				}
-				dm.mu.Unlock()
-
-				// Setup extraction progress callback
-				extractionAdapter := func(downloadedBytes, totalBytes int64) {
-					if totalBytes > 0 {
-						// Convert to estimation progress (0.0-1.0)
-						progress := float64(downloadedBytes) / float64(totalBytes)
-
-						// Update state
-						dm.mu.Lock()
-						state := dm.states[buildID]
-						if state == nil {
-							dm.mu.Unlock()
-							return
-						}
-
-						select {
-						case <-cancelCh:
-							dm.mu.Unlock()
-							return
-						default:
-						}
-
-						now := time.Now()
-						state.LastUpdated = now
-						state.Progress = progress
-						state.Current = downloadedBytes
-						state.Total = totalBytes
-						state.BuildState = model.StateExtracting
-						dm.mu.Unlock()
-					}
-				}
-
-				// Start extraction
-				extractedPath, err := download.DownloadAndExtractBuild(build, dm.cfg.DownloadDir, extractionAdapter, cancelCh)
-
-				// Update final state based on extraction result
-				dm.mu.Lock()
-				state = dm.states[buildID]
-				if state == nil {
-					dm.mu.Unlock()
-					return
-				}
-
-				if err != nil {
-					// Check if this was a cancellation
-					if errors.Is(err, download.ErrCancelled) {
-						state.BuildState = model.StateCancelled
-					} else {
-						// Any other error should mark as failed
-						state.BuildState = model.StateFailed
-						state.Progress = 0.0
-					}
-				} else {
-					state.BuildState = model.StateLocal
-					state.Progress = 1.0
-				}
-				dm.mu.Unlock()
-
-				// Send completion message
-				programCh <- downloadCompleteMsg{
-					buildVersion:  build.Version,
-					extractedPath: extractedPath,
-					err:           err,
-				}
-				return
-
-			case <-cancelCh:
-				// Download was cancelled
-				dm.mu.Lock()
-				state := dm.states[buildID]
-				if state != nil {
-					state.BuildState = model.StateCancelled
-					state.Progress = 0.0
-				}
-				dm.mu.Unlock()
-				break downloadLoop
+		// Final state transition.
+		dm.mu.Lock()
+		state := dm.states[buildID]
+		if state == nil {
+			dm.mu.Unlock()
+			return
+		}
+		state.Speed = 0
+		if err != nil {
+			if errors.Is(err, download.ErrCancelled) {
+				state.BuildState = model.StateCancelled
+			} else {
+				state.BuildState = model.StateFailed
+				state.Progress = 0.0
 			}
+		} else {
+			state.BuildState = model.StateLocal
+			state.Progress = 1.0
+		}
+		dm.mu.Unlock()
+
+		programCh <- downloadCompleteMsg{
+			buildVersion:  build.Version,
+			extractedPath: extractedPath,
+			err:           err,
 		}
 	}()
 

@@ -1,13 +1,10 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/launch"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -47,33 +44,20 @@ func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 		// Create a command that locates the correct build directory by version
 		return m, func() tea.Msg {
-			entries, err := os.ReadDir(m.config.DownloadDir)
+			version := selectedBuild.Version
+			buildInfo, dirPath, err := local.FindBuild(m.config.DownloadDir, func(b model.BlenderBuild) bool {
+				return b.Version == version
+			})
 			if err != nil {
 				return errMsg{fmt.Errorf("failed to read download directory %s: %w", m.config.DownloadDir, err)}
 			}
-
-			version := selectedBuild.Version
-			for _, entry := range entries {
-				if entry.IsDir() && entry.Name() != download.DownloadingDir && entry.Name() != download.OldBuildsDir {
-					dirPath := filepath.Join(m.config.DownloadDir, entry.Name())
-					buildInfo, err := local.ReadBuildInfo(dirPath)
-					if err != nil {
-						// Error reading build info, but continue checking other directories
-						continue
-					}
-
-					// Check if this is the build we want to open
-					if buildInfo != nil && buildInfo.Version == version {
-						// Open this directory
-						if err := local.OpenFileExplorer(dirPath); err != nil {
-							return errMsg{fmt.Errorf("failed to open directory: %w", err)}
-						}
-						return nil // Success
-					}
-				}
+			if buildInfo == nil {
+				return errMsg{fmt.Errorf("build directory for Blender version %s not found", version)}
 			}
-
-			return errMsg{fmt.Errorf("build directory for Blender version %s not found", version)}
+			if err := local.OpenFileExplorer(dirPath); err != nil {
+				return errMsg{fmt.Errorf("failed to open directory: %w", err)}
+			}
+			return nil // Success
 		}
 	}
 	return m, nil
@@ -92,13 +76,8 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 		selectedBuild.Status == model.StateFailed ||
 		selectedBuild.Status == model.StateCancelled { // StateNone == Cancelled
 
-		buildID := selectedBuild.Version
-		if selectedBuild.Hash != "" {
-			buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
-		}
-
 		return m, func() tea.Msg {
-			return startDownloadMsg{build: *selectedBuild, buildID: buildID}
+			return startDownloadMsg{build: *selectedBuild, buildID: selectedBuild.ID()}
 		}
 	}
 	return m, nil
@@ -135,10 +114,7 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	selectedBuildID := selectedBuild.Version
-	if selectedBuild.Hash != "" {
-		selectedBuildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
-	}
+	selectedBuildID := selectedBuild.ID()
 
 	// Use activeDownloadID if set; otherwise, use the selected build ID
 	buildID := m.Progress.ActiveDownloadID
@@ -151,10 +127,7 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 
 	// Update the build status to Cancelled (StateNone) after cancellation
 	for i, build := range m.List.Builds {
-		bID := build.Version
-		if build.Hash != "" {
-			bID = build.Version + "-" + build.Hash[:8]
-		}
+		bID := build.ID()
 
 		// Update the status of both the selected build and any build matching the active download
 		if bID == m.Progress.ActiveDownloadID || bID == selectedBuildID {
@@ -205,6 +178,46 @@ func (m *Model) handleBuildDeleted(msg buildDeletedMsg) (tea.Model, tea.Cmd) {
 	return m, m.commands.ScanLocalBuilds()
 }
 
+// mergeBuilds preserves local and in-progress builds from the current list and
+// merges the incoming builds into them (de-duplicating by version+hash while
+// preserving downloading/extracting status), then applies the version filter.
+// Shared by the local-scan and online-fetch handlers.
+func (m *Model) mergeBuilds(incoming []model.BlenderBuild) []model.BlenderBuild {
+	// Start with preserved builds (local + in-progress).
+	merged := make([]model.BlenderBuild, 0, len(m.List.Builds)+len(incoming))
+	for _, build := range m.List.Builds {
+		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			merged = append(merged, build)
+		}
+	}
+
+	// Merge incoming builds, avoiding duplicates.
+	for _, newBuild := range incoming {
+		isDuplicate := false
+		for i, existingBuild := range merged {
+			if existingBuild.Version == newBuild.Version &&
+				(existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "")) {
+				isDuplicate = true
+				// Preserve downloading/extracting status across the merge.
+				if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
+					newBuild.Status = existingBuild.Status
+				}
+				merged[i] = newBuild
+				break
+			}
+		}
+		if !isDuplicate {
+			merged = append(merged, newBuild)
+		}
+	}
+
+	// Apply version filter if set.
+	if m.config.VersionFilter != "" {
+		merged = m.applyVersionFilter(merged)
+	}
+	return merged
+}
+
 // handleLocalBuildsScanned processes the result of scanning local builds
 func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, tea.Cmd) {
 	// If there was an error scanning builds, store it but continue with empty list
@@ -214,44 +227,7 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 		return m, nil
 	}
 
-	// Preserve local builds and builds that are currently downloading/extracting from the current list.
-	var preservedBuilds []model.BlenderBuild
-	for _, build := range m.List.Builds {
-		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			preservedBuilds = append(preservedBuilds, build)
-		}
-	}
-
-	// Start with preserved builds
-	m.List.Builds = preservedBuilds
-
-	// Add scanned local builds, avoiding duplicates
-	for _, scannedBuild := range msg.builds {
-		isDuplicate := false
-		for i, existingBuild := range m.List.Builds {
-			// Check if builds are the same (by version and hash if available)
-			if existingBuild.Version == scannedBuild.Version {
-				if existingBuild.Hash == scannedBuild.Hash || (existingBuild.Hash == "" && scannedBuild.Hash == "") {
-					isDuplicate = true
-					// Preserve the status of the existing build if it's downloading/extracting
-					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
-						scannedBuild.Status = existingBuild.Status
-					}
-					// Replace the existing build with the scanned one
-					m.List.Builds[i] = scannedBuild
-					break
-				}
-			}
-		}
-		if !isDuplicate {
-			m.List.Builds = append(m.List.Builds, scannedBuild)
-		}
-	}
-
-	// Apply version filter if set
-	if m.config.VersionFilter != "" {
-		m.List.Builds = m.applyVersionFilter(m.List.Builds)
-	}
+	m.List.Builds = m.mergeBuilds(msg.builds)
 
 	// Sort builds immediately
 	m.List.SortBuilds()
@@ -272,44 +248,7 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Preserve local builds and builds that are currently downloading/extracting from the current list.
-	var preservedBuilds []model.BlenderBuild
-	for _, build := range m.List.Builds {
-		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			preservedBuilds = append(preservedBuilds, build)
-		}
-	}
-
-	// Start with preserved builds
-	m.List.Builds = preservedBuilds
-
-	// Add newly fetched builds, avoiding duplicates
-	for _, newBuild := range msg.builds {
-		isDuplicate := false
-		for i, existingBuild := range m.List.Builds {
-			// Check if builds are the same (by version and hash if available)
-			if existingBuild.Version == newBuild.Version {
-				if existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "") {
-					isDuplicate = true
-					// Preserve the status of the existing build if it's downloading/extracting
-					if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
-						newBuild.Status = existingBuild.Status
-					}
-					// Replace the existing build with the new one (to get updated info)
-					m.List.Builds[i] = newBuild
-					break
-				}
-			}
-		}
-		if !isDuplicate {
-			m.List.Builds = append(m.List.Builds, newBuild)
-		}
-	}
-
-	// Apply version filter if set *before* updating status
-	if m.config.VersionFilter != "" {
-		m.List.Builds = m.applyVersionFilter(m.List.Builds)
-	}
+	m.List.Builds = m.mergeBuilds(msg.builds)
 
 	// Reset cursor and startIndex
 	m.List.Cursor = 0
@@ -358,11 +297,7 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	downloadStates := make(map[string]model.BuildState)
 	for _, build := range m.List.Builds {
 		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
-			buildID := build.Version
-			if build.Hash != "" {
-				buildID = build.Version + "-" + build.Hash[:8]
-			}
-			downloadStates[buildID] = build.Status
+			downloadStates[build.ID()] = build.Status
 		}
 	}
 
@@ -371,11 +306,7 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 
 	// Restore downloading/extracting statuses by matching version/hash
 	for i := range m.List.Builds {
-		buildID := m.List.Builds[i].Version
-		if m.List.Builds[i].Hash != "" {
-			buildID = m.List.Builds[i].Version + "-" + m.List.Builds[i].Hash[:8]
-		}
-		if status, exists := downloadStates[buildID]; exists {
+		if status, exists := downloadStates[m.List.Builds[i].ID()]; exists {
 			m.List.Builds[i].Status = status
 		}
 	}
@@ -477,10 +408,7 @@ func (m *Model) updateBuildsStatusFromProgress() {
 	// updating m.List.Builds[i].Status based on m.Progress.DownloadStates
 
 	for i := range m.List.Builds {
-		buildID := m.List.Builds[i].Version
-		if m.List.Builds[i].Hash != "" {
-			buildID = m.List.Builds[i].Version + "-" + m.List.Builds[i].Hash[:8]
-		}
+		buildID := m.List.Builds[i].ID()
 
 		if state, ok := m.Progress.DownloadStates[buildID]; ok {
 			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {

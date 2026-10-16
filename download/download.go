@@ -24,6 +24,11 @@ import (
 const DownloadingDir = ".downloading"
 const OldBuildsDir = ".oldbuilds"
 
+// ExtractionVirtualSize is the synthetic total reported during the extraction
+// phase. We cannot know the uncompressed size up front, so the UI is driven
+// with a virtual byte budget tied to a 0.0-1.0 progress estimate.
+const ExtractionVirtualSize int64 = 100 * 1024 * 1024
+
 // Error constants
 var ErrCancelled = errors.New("operation cancelled")
 var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
@@ -31,13 +36,17 @@ var ErrIdleTimeout = errors.New("download timed out: connection idle for too lon
 // versionMetaFilename is the name of the metadata file saved in the extracted directory.
 const versionMetaFilename = "version.json"
 
-// ProgressCallback is a function type for reporting download progress.
-// It receives bytes downloaded and total file size.
-type ProgressCallback func(downloadedBytes, totalBytes int64)
+// ProgressCallback reports download progress: bytes downloaded, total size,
+// and the current transfer speed in bytes/sec.
+type ProgressCallback func(downloadedBytes, totalBytes int64, speedBytesPerSec float64)
 
 // ExtractionProgressCallback represents a callback used to report extraction progress.
 // Since we can't know the total size up front, we use a percentage (0.0-1.0) estimate.
 type ExtractionProgressCallback func(estimatedProgress float64)
+
+// downloadTimeout caps a single download. Kept generous because Blender
+// builds are large; connection liveness is bounded by the transport timeouts.
+const downloadTimeout = 30 * time.Minute
 
 // downloadFile downloads a file, reporting progress via the callback.
 func downloadFile(url string, destFilePath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
@@ -47,10 +56,10 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
-	// Create download client with configurable timeout
+	// No global client timeout: large builds legitimately take a long time.
+	// Connection liveness is bounded by the transport timeouts below.
 	client := grab.NewClient()
 	client.HTTPClient = &http.Client{
-		Timeout: 30 * time.Second, // Set reasonable timeout to prevent hanging connections
 		Transport: &http.Transport{
 			IdleConnTimeout:       90 * time.Second,
 			DisableCompression:    false,
@@ -73,28 +82,36 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 	// Start download
 	resp := client.Do(req)
 
-	// Create a channel to signal completion
-	done := make(chan error, 1)
-	go func() {
-		<-resp.Done
-		if err := resp.Err(); err != nil {
-			done <- fmt.Errorf("download failed: %w", err)
-			return
-		}
-		done <- nil
-	}()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
-	// Wait for completion, cancellation, or timeout
-	select {
-	case err := <-done:
-		if err != nil {
-			return err
+	timeout := time.NewTimer(downloadTimeout)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if progressCb != nil {
+				progressCb(resp.BytesComplete(), resp.Size(), resp.BytesPerSecond())
+			}
+
+		case <-resp.Done:
+			if err := resp.Err(); err != nil {
+				return fmt.Errorf("download failed: %w", err)
+			}
+			if progressCb != nil {
+				progressCb(resp.Size(), resp.Size(), 0)
+			}
+			return nil
+
+		case <-cancelCh:
+			_ = resp.Cancel()
+			return ErrCancelled
+
+		case <-timeout.C:
+			_ = resp.Cancel()
+			return fmt.Errorf("download timed out after %s: %w", downloadTimeout, ErrIdleTimeout)
 		}
-		return nil
-	case <-cancelCh:
-		return ErrCancelled
-	case <-time.After(30 * time.Minute): // Increased timeout for large files
-		return fmt.Errorf("download timed out after 30 minutes: %w", ErrIdleTimeout)
 	}
 }
 
@@ -648,8 +665,27 @@ func findRootDirInTarXz(archivePath string) (string, error) {
 	return "", fmt.Errorf("no root directory found in archive")
 }
 
-// DownloadAndExtractBuild downloads and extracts a build, handling cancellation.
-func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) (string, error) {
+// ArchiveBuildDir moves a build directory into the timestamped .oldbuilds
+// directory under downloadBaseDir. Shared by build replacement and deletion.
+func ArchiveBuildDir(downloadBaseDir, buildDir string) error {
+	oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
+	if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
+		return fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
+	}
+	timestamp := time.Now().Format("20060102_150405")
+	oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(buildDir), timestamp)
+	return os.Rename(buildDir, filepath.Join(oldBuildsDir, oldBuildName))
+}
+
+// DownloadAndExtractBuild downloads (reporting via downloadCb) and extracts
+// (reporting via extractCb) a build, handling cancellation throughout.
+func DownloadAndExtractBuild(
+	build model.BlenderBuild,
+	downloadBaseDir string,
+	downloadCb ProgressCallback,
+	extractCb ExtractionProgressCallback,
+	cancelCh <-chan struct{},
+) (string, error) {
 	// 1. Download
 	downloadFileName := filepath.Base(build.DownloadURL)
 	downloadTempDir := filepath.Join(downloadBaseDir, DownloadingDir)
@@ -660,11 +696,10 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 
 	// Defer cleanup of the downloaded archive file
 	defer func() {
-		if err := os.Remove(downloadPath); err != nil && !os.IsNotExist(err) {
-		}
+		_ = os.Remove(downloadPath)
 	}()
 
-	if err := downloadFile(build.DownloadURL, downloadPath, progressCb, cancelCh); err != nil {
+	if err := downloadFile(build.DownloadURL, downloadPath, downloadCb, cancelCh); err != nil {
 		if errors.Is(err, ErrCancelled) {
 			return "", ErrCancelled // Propagate cancellation error
 		}
@@ -697,16 +732,6 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		}
 	}
 
-	// 3. Extract based on archive type
-	extractionCb := func(progress float64) {
-		if progressCb != nil {
-			// Use a large virtual size to indicate extraction phase to the UI
-			const extractionVirtualSize int64 = 100 * 1024 * 1024
-			currentBytes := int64(progress * float64(extractionVirtualSize))
-			progressCb(currentBytes, extractionVirtualSize)
-		}
-	}
-
 	var extractedRootDir string
 	var extractErr error
 
@@ -720,7 +745,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
 
 		// Extract the archive
-		extractErr = extractTarXz(downloadPath, downloadBaseDir, extractionCb, cancelCh)
+		extractErr = extractTarXz(downloadPath, downloadBaseDir, extractCb, cancelCh)
 	} else if strings.HasSuffix(downloadFileName, ".zip") {
 		// Peek into the archive to find the root directory
 		rootDir, err := findRootDirInZip(downloadPath)
@@ -730,21 +755,15 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
 
 		// Extract the zip archive
-		extractErr = extractZip(downloadPath, downloadBaseDir, extractionCb, cancelCh)
+		extractErr = extractZip(downloadPath, downloadBaseDir, extractCb, cancelCh)
 	} else {
 		return "", fmt.Errorf("unsupported archive format: %s", downloadFileName)
 	}
 
 	// Handle extraction error - only backup old build if extraction succeeded
 	if extractErr == nil && existingBuildDir != "" {
-		oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
-		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
-			return extractedRootDir, fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
-		}
-		timestamp := time.Now().Format("20060102_150405")
-		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
-		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
-		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
+		if err := ArchiveBuildDir(downloadBaseDir, existingBuildDir); err != nil {
+			// Fall back to removing the old build if archiving fails.
 			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
 				return extractedRootDir, fmt.Errorf("failed to replace old build dir: %w", err)
 			}

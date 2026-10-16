@@ -18,10 +18,10 @@ func (m *Model) renderBuildFooter() string {
 
 	// General commands always available
 	generalCommands := []string{
-		fmt.Sprintf("%s Fetch", keyStyle.Render("f")),
-		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
-		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
-		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
+		fmt.Sprintf("%s Fetch", keyStyle.Render(PrimaryKey(CmdFetchBuilds))),
+		fmt.Sprintf("%s Reverse Sort", keyStyle.Render(PrimaryKey(CmdToggleSortOrder))),
+		fmt.Sprintf("%s Settings", keyStyle.Render(PrimaryKey(CmdShowSettings))),
+		fmt.Sprintf("%s Quit", keyStyle.Render(PrimaryKey(CmdQuit))),
 	}
 
 	// Contextual commands based on the highlighted build
@@ -30,32 +30,29 @@ func (m *Model) renderBuildFooter() string {
 		build := m.List.Builds[m.List.Cursor]
 		if build.Status == model.StateLocal {
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
-				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
+				fmt.Sprintf("%s Launch", keyStyle.Render(PrimaryKey(CmdLaunchBuild))),
+				fmt.Sprintf("%s Open Dir", keyStyle.Render(PrimaryKey(CmdOpenBuildDir))),
 			)
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
+				fmt.Sprintf("%s Delete", keyStyle.Render(PrimaryKey(CmdDeleteBuild))),
 			)
 		} else if build.Status == model.StateUpdate {
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Download", keyStyle.Render("d")),
-				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
-				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
-				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
+				fmt.Sprintf("%s Download", keyStyle.Render(PrimaryKey(CmdDownloadBuild))),
+				fmt.Sprintf("%s Launch", keyStyle.Render(PrimaryKey(CmdLaunchBuild))),
+				fmt.Sprintf("%s Open Dir", keyStyle.Render(PrimaryKey(CmdOpenBuildDir))),
+				fmt.Sprintf("%s Delete", keyStyle.Render(PrimaryKey(CmdDeleteBuild))),
 			)
 		} else if build.Status == model.StateOnline ||
 			build.Status == model.StateCancelled ||
 			build.Status == model.StateFailed {
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Download", keyStyle.Render("d")),
+				fmt.Sprintf("%s Download", keyStyle.Render(PrimaryKey(CmdDownloadBuild))),
 			)
 		}
 
 		// Check for active download state
-		buildID := build.Version
-		if build.Hash != "" {
-			buildID = build.Version + "-" + build.Hash[:8]
-		}
+		buildID := build.ID()
 		state := m.commands.downloads.GetState(buildID)
 		if state != nil && (state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
 			// Remove any existing download command
@@ -67,7 +64,7 @@ func (m *Model) renderBuildFooter() string {
 			}
 			contextualCommands = filtered
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Cancel", keyStyle.Render("x")),
+				fmt.Sprintf("%s Cancel", keyStyle.Render(PrimaryKey(CmdDeleteBuild))),
 			)
 		}
 	}
@@ -99,16 +96,16 @@ func (m *Model) renderSettingsFooter() string {
 	}
 
 	commands := []string{
-		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
-		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
+		fmt.Sprintf("%s Edit setting", keyStyle.Render(PrimaryKey(CmdToggleEditMode))),
+		fmt.Sprintf("%s Save and exit", keyStyle.Render(PrimaryKey(CmdSaveSettings))),
 	}
 
 	// Only add the clean option if there are old builds
 	if showCleanOption {
-		commands = append(commands, fmt.Sprintf("%s Clean old Builds Dir", keyStyle.Render("c")))
+		commands = append(commands, fmt.Sprintf("%s Clean old Builds Dir", keyStyle.Render(PrimaryKey(CmdCleanOldBuilds))))
 	}
 
-	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
+	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render(PrimaryKey(CmdQuit))))
 
 	line2 := strings.Join(commands, separator)
 

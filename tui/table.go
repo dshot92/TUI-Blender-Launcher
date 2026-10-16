@@ -252,10 +252,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		build := m.List.Builds[i]
 
 		// Create a buildID to check for download state
-		buildID := build.Version
-		if build.Hash != "" {
-			buildID = build.Version + "-" + build.Hash[:8]
-		}
+		buildID := build.ID()
 
 		// Track that we're processing this build
 		processedBuilds[buildID] = true

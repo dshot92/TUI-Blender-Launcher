@@ -109,6 +109,19 @@ type BlenderBuild struct {
 	// Selected field removed - we only work with highlighted builds now
 }
 
+// ID returns a stable identifier for the build: its version, optionally
+// suffixed with the short (8-char) commit hash when present.
+func (b BlenderBuild) ID() string {
+	if b.Hash == "" {
+		return b.Version
+	}
+	h := b.Hash
+	if len(h) > 8 {
+		h = h[:8]
+	}
+	return b.Version + "-" + h
+}
+
 // BlenderLaunchedMsg is sent when Blender is successfully launched
 // This allows the UI to handle launched state appropriately
 type BlenderLaunchedMsg struct {

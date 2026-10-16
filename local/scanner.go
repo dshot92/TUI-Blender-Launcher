@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -98,74 +97,73 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 	return lookupMap, nil
 }
 
-func DeleteBuild(downloadDir string, hash string) (bool, error) {
+// FindBuild returns the first local build matching the predicate, along with
+// its directory path. Returns (nil, "", nil) when nothing matches.
+func FindBuild(downloadDir string, match func(model.BlenderBuild) bool) (*model.BlenderBuild, string, error) {
 	entries, err := os.ReadDir(downloadDir)
 	if err != nil {
-		return false, fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
+		if os.IsNotExist(err) {
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || entry.Name() == download.OldBuildsDir || entry.Name() == download.DownloadingDir {
 			continue
 		}
-
 		dirPath := filepath.Join(downloadDir, entry.Name())
 		buildInfo, err := ReadBuildInfo(dirPath)
-		if err != nil {
-			return false, fmt.Errorf("failed to read build info from %s: %w", dirPath, err)
-		}
-		if buildInfo == nil {
+		if err != nil || buildInfo == nil {
 			continue
 		}
-		if buildInfo.Hash != hash {
-			continue
+		if match(*buildInfo) {
+			return buildInfo, dirPath, nil
 		}
-
-		oldBuildsDir := filepath.Join(downloadDir, download.OldBuildsDir)
-		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
-			return false, fmt.Errorf("failed to create %s directory: %w", download.OldBuildsDir, err)
-		}
-		timestamp := time.Now().Format("20060102_150405")
-		oldBuildName := fmt.Sprintf("%s_%s", entry.Name(), timestamp)
-		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
-		if err := os.Rename(dirPath, oldBuildPath); err != nil {
-			return false, fmt.Errorf("failed to move build to %s: %w", download.OldBuildsDir, err)
-		}
-		return true, nil
 	}
 
-	return false, fmt.Errorf("build not found with hash: %s", hash)
+	return nil, "", nil
+}
+
+// DeleteBuild archives the build with the given hash into .oldbuilds.
+func DeleteBuild(downloadDir string, hash string) (bool, error) {
+	buildInfo, dirPath, err := FindBuild(downloadDir, func(b model.BlenderBuild) bool {
+		return b.Hash == hash
+	})
+	if err != nil {
+		return false, err
+	}
+	if buildInfo == nil {
+		return false, fmt.Errorf("build not found with hash: %s", hash)
+	}
+
+	if err := download.ArchiveBuildDir(downloadDir, dirPath); err != nil {
+		return false, fmt.Errorf("failed to move build to %s: %w", download.OldBuildsDir, err)
+	}
+	return true, nil
 }
 
 // LaunchBlenderCmd creates a command to launch Blender for a specific version.
 func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := os.ReadDir(downloadDir)
+		buildInfo, dirPath, err := FindBuild(downloadDir, func(b model.BlenderBuild) bool {
+			return b.Version == version
+		})
 		if err != nil {
-			return fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
+			return err
+		}
+		if buildInfo == nil {
+			return fmt.Errorf("blender version %s not found", version)
 		}
 
-		for _, entry := range entries {
-			if entry.IsDir() {
-				dirPath := filepath.Join(downloadDir, entry.Name())
-				buildInfo, err := ReadBuildInfo(dirPath)
-				if err != nil {
-					continue
-				}
-				if buildInfo != nil && buildInfo.Version == version {
-					blenderExe := findBlenderExecutable(dirPath)
-					if blenderExe == "" {
-						return fmt.Errorf("could not find Blender executable in %s", dirPath)
-					}
-					return model.BlenderExecMsg{
-						Version:    version,
-						Executable: blenderExe,
-					}
-				}
-			}
+		blenderExe := findBlenderExecutable(dirPath)
+		if blenderExe == "" {
+			return fmt.Errorf("could not find Blender executable in %s", dirPath)
 		}
-
-		return fmt.Errorf("blender version %s not found", version)
+		return model.BlenderExecMsg{
+			Version:    version,
+			Executable: blenderExe,
+		}
 	}
 }
 
