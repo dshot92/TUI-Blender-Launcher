@@ -1,10 +1,7 @@
 package tui
 
 import (
-	"github.com/dshot92/TUI-Blender-Launcher/download"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -137,42 +134,55 @@ func hintAt(hints []hint, x, lineStart int) (CommandType, bool) {
 	return 0, false
 }
 
-// settingsHints returns the key hints shown inside the settings modal.
+// settingsHints returns the key hints shown inside the settings modal. The
+// hints describe only the commands that actually apply to the focused row and
+// current mode, so the help line never advertises a key that does nothing (for
+// example, left/right over a text field).
 func (m *Model) settingsHints() []hint {
 	// While editing a text field, most keys go to the input, so advertise the
-	// two ways out: save (enter) or discard (esc).
+	// ways to complete or leave the edit instead.
 	if m.Settings.EditMode {
-		return []hint{
-			{key: "esc", label: "cancel", cmd: CmdNone},
-			{key: "enter", label: "save", cmd: CmdNone},
+		hints := []hint{}
+		if m.Settings.FocusIndex == settingDownloadDir {
+			hints = append(hints, hint{key: "tab", label: "complete", cmd: CmdNone})
 		}
+		return append(hints,
+			hint{key: "esc", label: "cancel", cmd: CmdNone},
+			hint{key: "enter", label: "save", cmd: CmdNone},
+		)
 	}
 
 	// While toggling release types, advertise the toggle controls.
 	if m.Settings.releaseEditing {
 		return []hint{
+			{key: "←/→", label: "move", cmd: CmdNone},
 			{key: "space", label: "toggle", cmd: CmdNone},
 			{key: "enter", label: "save", cmd: CmdNone},
 			{key: "esc", label: "cancel", cmd: CmdNone},
 		}
 	}
 
-	// Only offer the clean option when there is something to clean.
-	showClean := false
-	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)
-	if entries, err := os.ReadDir(oldBuildsDir); err == nil && len(entries) > 0 {
-		showClean = true
+	commands := []hint{}
+
+	// Option rows cycle their value with left/right (enter also advances them);
+	// text and multi-select rows only open an editor, so left/right does not
+	// apply to them.
+	switch m.Settings.FocusIndex {
+	case settingBuildType, settingTheme:
+		commands = append(commands,
+			hint{key: "←/→", label: "change", cmd: CmdNone},
+			hint{key: PrimaryKey(CmdToggleEditMode), label: "next", cmd: CmdToggleEditMode},
+		)
+	default:
+		commands = append(commands,
+			hint{key: PrimaryKey(CmdToggleEditMode), label: "edit", cmd: CmdToggleEditMode},
+		)
 	}
 
-	commands := []hint{
-		{key: PrimaryKey(CmdToggleEditMode), label: "edit", cmd: CmdToggleEditMode},
-		{key: PrimaryKey(CmdMoveLeft), label: "change", cmd: CmdMoveLeft},
-		{key: PrimaryKey(CmdSaveSettings), label: "save", cmd: CmdSaveSettings},
-	}
-	if showClean {
-		commands = append(commands, hint{key: PrimaryKey(CmdCleanOldBuilds), label: "clean", cmd: CmdCleanOldBuilds})
-	}
-	commands = append(commands, hint{key: PrimaryKey(CmdQuit), label: "quit", cmd: CmdQuit})
+	commands = append(commands,
+		hint{key: PrimaryKey(CmdSaveSettings), label: "save", cmd: CmdSaveSettings},
+		hint{key: PrimaryKey(CmdQuit), label: "quit", cmd: CmdQuit},
+	)
 
 	return commands
 }

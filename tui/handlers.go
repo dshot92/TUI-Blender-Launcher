@@ -384,55 +384,68 @@ func (m *Model) handleDownloadCompleteMsg(msg downloadCompleteMsg) (tea.Model, t
 	return m, m.commands.ProgramMsgListener()
 }
 
-// executeFooterCommand runs the action bound to a clicked/detected footer hint.
-func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
+// executeListCommand dispatches an app-level list-view command and reports
+// whether it was handled. Commands it does not handle (cursor movement, column
+// changes) fall through to the list model.
+func (m *Model) executeListCommand(cmd CommandType) (tea.Model, tea.Cmd, bool) {
 	switch cmd {
 	case CmdQuit:
-		return m, tea.Quit
+		return m, tea.Quit, true
 	case CmdShowSettings:
 		m.currentView = viewSettings
 		m.Settings.SetValues(SettingsValuesFromConfig(m.config))
 		m.settingsSaved = m.Settings.GetValues()
-		return m, nil
+		return m, nil, true
 	case CmdFetchBuilds:
-		return m, m.commands.FetchBuilds()
+		return m, m.commands.FetchBuilds(), true
 	case CmdDownloadBuild:
-		return m.handleStartDownload()
+		mdl, c := m.handleStartDownload()
+		return mdl, c, true
 	case CmdLaunchBuild:
-		return m.handleLaunchBlender()
+		mdl, c := m.handleLaunchBlender()
+		return mdl, c, true
 	case CmdOpenBuildDir:
-		return m.handleOpenBuildDir()
+		mdl, c := m.handleOpenBuildDir()
+		return mdl, c, true
 	case CmdOpenURL:
-		return m.handleOpenURL()
+		mdl, c := m.handleOpenURL()
+		return mdl, c, true
 	case CmdToggleDetail:
 		m.detailShown = !m.detailShown
 		m.computeLayout()
 		if m.detailShown && !m.layout.detailVisible {
 			return m, func() tea.Msg {
 				return statusMsg{text: "not enough space for the info panel"}
-			}
+			}, true
 		}
-		return m, nil
+		return m, nil, true
 	case CmdToggleSortOrder:
 		m.List.SortReversed = !m.List.SortReversed
 		m.List.SortBuilds()
 		m.List.EnsureCursorVisible()
-		return m, nil
+		return m, nil, true
 	case CmdCleanOldBuilds:
-		return m, m.cleanOldBuildsCmd()
+		return m, m.cleanOldBuildsCmd(), true
 	case CmdDeleteBuild:
 		build := m.List.GetSelectedBuild()
 		if build == nil {
-			return m, nil
+			return m, nil, true
 		}
 		if !m.isDownloading(*build) && build.Status != model.StateLocal && build.Status != model.StateUpdate {
-			return m, nil
+			return m, nil, true
 		}
 		m.beginDeleteConfirm(*build)
-		return m, nil
+		return m, nil, true
 	default:
-		return m, nil
+		return m, nil, false
 	}
+}
+
+// executeFooterCommand runs the action bound to a clicked/detected footer hint.
+// Footer hints only ever expose app-level commands.
+func (m *Model) executeFooterCommand(cmd CommandType) (tea.Model, tea.Cmd) {
+	mdl, c, _ := m.executeListCommand(cmd)
+	return mdl, c
 }
 
 // cleanOldBuildsCmd removes archived builds and reports the outcome as a toast.
@@ -457,6 +470,21 @@ func (m *Model) beginDeleteConfirm(build model.BlenderBuild) {
 	m.deleteConfirmBuild = build
 	m.deleteConfirmCancel = m.isDownloading(build)
 	m.deleteConfirmChoice = confirmChoiceNo
+}
+
+// saveSettingsAndExit persists the settings and returns to the list view. After
+// the initial setup it also nudges the user to fetch builds.
+func (m *Model) saveSettingsAndExit() (tea.Model, tea.Cmd) {
+	wasInitial := m.currentView == viewInitialSetup
+	m.currentView = viewList
+	mdl, cmd := m.SaveSettingsAndReturn()
+	if wasInitial {
+		statusCmd := func() tea.Msg {
+			return statusMsg{text: "Press f to fetch builds"}
+		}
+		return mdl, tea.Batch(cmd, statusCmd)
+	}
+	return mdl, cmd
 }
 
 // isDownloading reports whether build is mid-transfer. The build's own status is
@@ -485,23 +513,9 @@ func (m *Model) executeSettingsCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 		if m.Settings.EditMode || m.Settings.releaseEditing {
 			return m, nil
 		}
-		wasInitial := m.currentView == viewInitialSetup
-		m.currentView = viewList
-		mdl, c := m.SaveSettingsAndReturn()
-		if wasInitial {
-			statusCmd := func() tea.Msg {
-				return statusMsg{text: "Press f to fetch builds"}
-			}
-			return mdl, tea.Batch(c, statusCmd)
-		}
-		return mdl, c
-	case CmdToggleEditMode:
-		_, c := m.Settings.handleToggleEdit()
-		return m, c
-	case CmdMoveLeft:
-		if !m.Settings.EditMode {
-			m.Settings.cycleOption(-1)
-		}
+		return m.saveSettingsAndExit()
+	case CmdToggleEditMode, CmdMoveLeft:
+		m.Settings.handleCommand(cmd)
 		return m, nil
 	case CmdCleanOldBuilds:
 		if m.Settings.EditMode || m.Settings.releaseEditing {

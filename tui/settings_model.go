@@ -465,33 +465,8 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		for _, cmd := range GetCommandsForView(viewSettings) {
 			if key.Matches(msg, GetKeyBinding(cmd.Type)) {
-				switch cmd.Type {
-				case CmdToggleEditMode:
-					return m.handleToggleEdit()
-
-				case CmdMoveUp:
-					if !m.EditMode {
-						m.moveFocus(-1)
-						return m, nil
-					}
-
-				case CmdMoveDown:
-					if !m.EditMode {
-						m.moveFocus(1)
-						return m, nil
-					}
-
-				case CmdMoveLeft:
-					if !m.EditMode {
-						m.cycleOption(-1)
-						return m, nil
-					}
-
-				case CmdMoveRight:
-					if !m.EditMode {
-						m.cycleOption(1)
-						return m, nil
-					}
+				if m.handleCommand(cmd.Type) {
+					return m, nil
 				}
 			}
 		}
@@ -507,6 +482,44 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// handleCommand performs the settings-local action for cmd, reporting whether it
+// handled the command. It covers edit toggling, focus movement and option
+// cycling; app-level commands (quit, save, clean) are handled by the Model.
+// While a text field is being edited, navigation commands are left unhandled so
+// the keystroke can be routed to the input.
+func (m *SettingsModel) handleCommand(cmd CommandType) bool {
+	switch cmd {
+	case CmdToggleEditMode:
+		m.handleToggleEdit()
+		return true
+	case CmdMoveUp:
+		if m.EditMode {
+			return false
+		}
+		m.moveFocus(-1)
+		return true
+	case CmdMoveDown:
+		if m.EditMode {
+			return false
+		}
+		m.moveFocus(1)
+		return true
+	case CmdMoveLeft:
+		if m.EditMode {
+			return false
+		}
+		m.cycleOption(-1)
+		return true
+	case CmdMoveRight:
+		if m.EditMode {
+			return false
+		}
+		m.cycleOption(1)
+		return true
+	}
+	return false
 }
 
 // handleToggleEdit enters/leaves edit mode for text settings, and cycles the

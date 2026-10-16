@@ -172,7 +172,6 @@ var (
 		{Type: CmdMoveDown, Keys: []string{"down", "j"}, Description: "Move cursor down"},
 		{Type: CmdMoveLeft, Keys: []string{"left", "h"}, Description: "Select previous option"},
 		{Type: CmdMoveRight, Keys: []string{"right", "l"}, Description: "Select next option"},
-		{Type: CmdCleanOldBuilds, Keys: []string{"c"}, Description: "Clean old builds"},
 	}
 )
 

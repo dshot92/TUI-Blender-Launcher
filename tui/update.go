@@ -208,20 +208,7 @@ func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (
 				}
 			case CmdSaveSettings:
 				if !m.Settings.EditMode {
-					wasInitial := m.currentView == viewInitialSetup
-					m.currentView = viewList
-					mdl, cmd := m.SaveSettingsAndReturn()
-					if wasInitial {
-						statusCmd := func() tea.Msg {
-							return statusMsg{text: "Press f to fetch builds"}
-						}
-						return mdl, tea.Batch(cmd, statusCmd)
-					}
-					return mdl, cmd
-				}
-			case CmdCleanOldBuilds:
-				if !m.Settings.EditMode {
-					return m, m.cleanOldBuildsCmd()
+					return m.saveSettingsAndExit()
 				}
 			}
 		}
@@ -446,49 +433,12 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Check for app-level commands first
+		// App-level commands get first refusal; anything they do not handle
+		// (cursor movement, column changes) falls through to the list model.
 		for _, command := range GetCommandsForView(viewList) {
 			if MatchKey(msg, command.Type) {
-				switch command.Type {
-				case CmdQuit:
-					return m, tea.Quit
-				case CmdShowSettings:
-					m.currentView = viewSettings
-					m.Settings.SetValues(SettingsValuesFromConfig(m.config))
-					// Baseline for auto-save: nothing is written until an edit.
-					m.settingsSaved = m.Settings.GetValues()
-					return m, nil
-				case CmdFetchBuilds:
-					return m, m.commands.FetchBuilds()
-				case CmdDownloadBuild:
-					return m.handleStartDownload()
-				case CmdLaunchBuild:
-					return m.handleLaunchBlender()
-				case CmdOpenBuildDir:
-					return m.handleOpenBuildDir()
-				case CmdDeleteBuild:
-					build := m.List.GetSelectedBuild()
-					if build == nil {
-						return m, nil
-					}
-					if !m.isDownloading(*build) && build.Status != model.StateLocal && build.Status != model.StateUpdate {
-						return m, nil
-					}
-					m.beginDeleteConfirm(*build)
-					return m, nil
-				case CmdCleanOldBuilds:
-					return m, m.cleanOldBuildsCmd()
-				case CmdToggleDetail:
-					m.detailShown = !m.detailShown
-					m.computeLayout()
-					if m.detailShown && !m.layout.detailVisible {
-						return m, func() tea.Msg {
-							return statusMsg{text: "not enough space for the info panel"}
-						}
-					}
-					return m, nil
-				case CmdOpenURL:
-					return m.handleOpenURL()
+				if mdl, c, handled := m.executeListCommand(command.Type); handled {
+					return mdl, c
 				}
 			}
 		}
