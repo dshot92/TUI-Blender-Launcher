@@ -175,7 +175,6 @@ When the terminal is wide enough, the information panel docks beside the list. O
 - `Enter`: edit the selected text setting or toggle release types
 - `Space`: toggle a release type while editing release types
 - `s`: save and return to builds
-- `c`: clean up old builds when available
 - `Esc`: cancel the current edit
 - `q`: quit
 

@@ -322,6 +322,12 @@ func TestSettingsThemeSelectionAndLivePreview(t *testing.T) {
 		t.Fatalf("focus = %d, want %d", m.Settings.FocusIndex, settingTheme)
 	}
 
+	// Enter must not advance an option row; only left/right changes it.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.Settings.Theme != "dracula" {
+		t.Fatalf("enter should not change theme, got %q", m.Settings.Theme)
+	}
+
 	// Cycle to the next palette; the live UI must update immediately.
 	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	if m.Settings.Theme != "gruvbox" {
@@ -425,14 +431,14 @@ func TestSettingsCompactStacksPanesWhenNarrow(t *testing.T) {
 	assertExactWidth(t, "settings-narrow", out, 60)
 }
 
-func TestSettingsEnterOnOptionCyclesWithoutEditMode(t *testing.T) {
+func TestSettingsEnterOnOptionIsInert(t *testing.T) {
 	m := sampleModel()
 	m.currentView = viewSettings
 	m.UpdateWindowSize(120, 34)
 	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/blender", BuildType: "daily", Theme: "dracula"})
 
-	// Move to the Theme row and press Enter: it should cycle the value instead
-	// of entering edit mode.
+	// Move to the Theme row and press Enter: option rows are changed with
+	// left/right, so Enter must neither enter edit mode nor cycle the value.
 	for i := 0; i < settingTheme; i++ {
 		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
@@ -441,8 +447,8 @@ func TestSettingsEnterOnOptionCyclesWithoutEditMode(t *testing.T) {
 	if m.Settings.EditMode {
 		t.Fatalf("option rows must not enter edit mode")
 	}
-	if m.Settings.Theme != "gruvbox" {
-		t.Fatalf("theme after Enter = %q, want gruvbox", m.Settings.Theme)
+	if m.Settings.Theme != "dracula" {
+		t.Fatalf("Enter must not change an option, got theme %q", m.Settings.Theme)
 	}
 }
 
@@ -507,6 +513,69 @@ func TestSettingsEditHintsShowBothEscAndEnter(t *testing.T) {
 	}
 	if !keys["esc"] || !keys["enter"] {
 		t.Fatalf("editing hints should offer both esc and enter, got %+v", m.settingsHints())
+	}
+}
+
+// TestSettingsHintsMatchFocusedRow verifies the help line only advertises
+// commands that apply to the focused row (notably, left/right is offered for
+// option rows but not for text fields), and that the clean command is gone.
+func TestSettingsHintsMatchFocusedRow(t *testing.T) {
+	m := sampleModel()
+	m.currentView = viewSettings
+	m.Settings.SetValues(SettingsValues{DownloadDir: "/tmp/original", BuildType: "daily", Theme: "dracula"})
+
+	hasHint := func(hints []hint, key, label string) bool {
+		for _, h := range hints {
+			if h.key == key && h.label == label {
+				return true
+			}
+		}
+		return false
+	}
+	hasClean := func(hints []hint) bool {
+		for _, h := range hints {
+			if h.label == "clean" || h.cmd == CmdCleanOldBuilds {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Text rows can only be edited; left/right must not be advertised.
+	m.Settings.FocusIndex = settingDownloadDir
+	hints := m.settingsHints()
+	if !hasHint(hints, "enter", "edit") {
+		t.Fatalf("text row should offer edit, got %+v", hints)
+	}
+	if hasHint(hints, "←/→", "change") {
+		t.Fatalf("text row must not advertise left/right change, got %+v", hints)
+	}
+	if hasClean(hints) {
+		t.Fatalf("settings must not offer clean, got %+v", hints)
+	}
+
+	// Option rows change their value with left/right.
+	m.Settings.FocusIndex = settingBuildType
+	hints = m.settingsHints()
+	if !hasHint(hints, "←/→", "change") {
+		t.Fatalf("option row should advertise left/right change, got %+v", hints)
+	}
+	if hasHint(hints, "enter", "next") {
+		t.Fatalf("option row must not advertise an enter action, got %+v", hints)
+	}
+	if hasClean(hints) {
+		t.Fatalf("settings must not offer clean, got %+v", hints)
+	}
+
+	// Toggling release types advertises left/right to move the cursor.
+	m.Settings.FocusIndex = settingReleaseFilter
+	m.Settings.releaseEditing = true
+	hints = m.settingsHints()
+	if !hasHint(hints, "←/→", "move") || !hasHint(hints, "space", "toggle") {
+		t.Fatalf("release toggling should advertise move and toggle, got %+v", hints)
+	}
+	if hasClean(hints) {
+		t.Fatalf("settings must not offer clean, got %+v", hints)
 	}
 }
 
@@ -719,5 +788,49 @@ func TestVersionFilterLiveValidation(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyDown})  // move to the next row
 	if m.filterErr != nil {
 		t.Fatalf("filter error should clear after leaving the row: %v", m.filterErr)
+	}
+}
+
+// TestEmptyBuildsPaneCentersMessage verifies that an empty build list shows only
+// the hint message (no column header) and that the message sits on the vertical
+// midpoint of the pane's inner area.
+func TestEmptyBuildsPaneCentersMessage(t *testing.T) {
+	cfg := config.Config{DownloadDir: "/tmp/blender", BuildType: "daily", Theme: "dracula"}
+	m := InitialModel(cfg, false)
+	m.List.Builds = nil
+	m.UpdateWindowSize(100, 30)
+	m.computeLayout()
+
+	boxWidth := m.layout.listBoxWidth
+	boxHeight := m.layout.listBoxHeight
+	out := plain(m.renderBuildsPane(boxWidth, boxHeight))
+	lines := strings.Split(out, "\n")
+
+	if len(lines) != boxHeight {
+		t.Fatalf("pane has %d lines, want %d", len(lines), boxHeight)
+	}
+
+	msgRow := -1
+	for i, line := range lines {
+		if strings.Contains(line, "No Blender builds yet") {
+			msgRow = i
+			break
+		}
+	}
+	if msgRow < 0 {
+		t.Fatalf("empty-state message not found:\n%s", out)
+	}
+
+	// The column header must not be drawn while the list is empty.
+	if strings.Contains(out, "Version") || strings.Contains(out, "Branch") {
+		t.Fatalf("column header should be hidden when there are no builds:\n%s", out)
+	}
+
+	// Rows: one top border, then the inner area. The message should line up with
+	// the middle of the inner area (upper-middle row for an even inner height).
+	innerHeight := boxHeight - boxBorderFrameHeight
+	want := 1 + (innerHeight-1)/2
+	if msgRow != want {
+		t.Fatalf("message on row %d, want the vertical midpoint %d:\n%s", msgRow, want, out)
 	}
 }

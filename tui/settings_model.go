@@ -486,9 +486,9 @@ func (m *SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleCommand performs the settings-local action for cmd, reporting whether it
 // handled the command. It covers edit toggling, focus movement and option
-// cycling; app-level commands (quit, save, clean) are handled by the Model.
-// While a text field is being edited, navigation commands are left unhandled so
-// the keystroke can be routed to the input.
+// cycling; app-level commands (quit, save) are handled by the Model. While a
+// text field is being edited, navigation commands are left unhandled so the
+// keystroke can be routed to the input.
 func (m *SettingsModel) handleCommand(cmd CommandType) bool {
 	switch cmd {
 	case CmdToggleEditMode:
@@ -522,9 +522,10 @@ func (m *SettingsModel) handleCommand(cmd CommandType) bool {
 	return false
 }
 
-// handleToggleEdit enters/leaves edit mode for text settings, and cycles the
-// value of option settings. Enter commits the edit; Esc (handled separately)
-// discards it.
+// handleToggleEdit enters/leaves edit mode for text settings and opens the
+// release-type multi-select. Option rows (Build Channel, Theme) ignore Enter;
+// they are changed with left/right. Enter commits a text edit; Esc (handled
+// separately) discards it.
 func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
 	// The release-type row opens its own multi-select mode.
 	if m.FocusIndex == settingReleaseFilter {
@@ -535,8 +536,8 @@ func (m *SettingsModel) handleToggleEdit() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// Option rows do not respond to Enter; left/right cycles their value.
 	if m.FocusIndex >= len(m.Inputs) {
-		m.cycleOption(1)
 		return m, nil
 	}
 	if m.EditMode {

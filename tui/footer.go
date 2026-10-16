@@ -164,14 +164,12 @@ func (m *Model) settingsHints() []hint {
 
 	commands := []hint{}
 
-	// Option rows cycle their value with left/right (enter also advances them);
-	// text and multi-select rows only open an editor, so left/right does not
-	// apply to them.
+	// Option rows cycle their value with left/right; text and multi-select rows
+	// only open an editor, so left/right does not apply to them.
 	switch m.Settings.FocusIndex {
 	case settingBuildType, settingTheme:
 		commands = append(commands,
 			hint{key: "←/→", label: "change", cmd: CmdNone},
-			hint{key: PrimaryKey(CmdToggleEditMode), label: "next", cmd: CmdToggleEditMode},
 		)
 	default:
 		commands = append(commands,

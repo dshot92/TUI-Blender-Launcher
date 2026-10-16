@@ -472,19 +472,10 @@ func (m *Model) beginDeleteConfirm(build model.BlenderBuild) {
 	m.deleteConfirmChoice = confirmChoiceNo
 }
 
-// saveSettingsAndExit persists the settings and returns to the list view. After
-// the initial setup it also nudges the user to fetch builds.
+// saveSettingsAndExit persists the settings and returns to the list view.
 func (m *Model) saveSettingsAndExit() (tea.Model, tea.Cmd) {
-	wasInitial := m.currentView == viewInitialSetup
 	m.currentView = viewList
-	mdl, cmd := m.SaveSettingsAndReturn()
-	if wasInitial {
-		statusCmd := func() tea.Msg {
-			return statusMsg{text: "Press f to fetch builds"}
-		}
-		return mdl, tea.Batch(cmd, statusCmd)
-	}
-	return mdl, cmd
+	return m.SaveSettingsAndReturn()
 }
 
 // isDownloading reports whether build is mid-transfer. The build's own status is
@@ -517,11 +508,6 @@ func (m *Model) executeSettingsCommand(cmd CommandType) (tea.Model, tea.Cmd) {
 	case CmdToggleEditMode, CmdMoveLeft:
 		m.Settings.handleCommand(cmd)
 		return m, nil
-	case CmdCleanOldBuilds:
-		if m.Settings.EditMode || m.Settings.releaseEditing {
-			return m, nil
-		}
-		return m, m.cleanOldBuildsCmd()
 	default:
 		return m, nil
 	}
