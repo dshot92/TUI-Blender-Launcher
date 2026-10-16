@@ -18,6 +18,24 @@ const statusLifetime = 5 * time.Second
 // each other to register as a double click.
 const doubleClickWindow = 400 * time.Millisecond
 
+// tickIntervalIdle is the UI refresh interval when no transfer is running.
+const tickIntervalIdle = 500 * time.Millisecond
+
+// tickIntervalActive is the faster refresh interval used while a download or
+// extraction is in progress.
+const tickIntervalActive = 250 * time.Millisecond
+
+// initialTickDelay kicks the tick loop right after a download starts so the UI
+// reacts promptly.
+const initialTickDelay = 10 * time.Millisecond
+
+// Build-click double-click tolerance: the second click must land within this
+// many columns/rows of the first.
+const (
+	doubleClickSlopX = 2
+	doubleClickSlopY = 1
+)
+
 // Init initializes the model
 func (m *Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
@@ -229,7 +247,7 @@ func (m *Model) registerBuildClick(buildIdx, x, y int) bool {
 	double := buildIdx == m.lastClickBuild &&
 		!m.lastClickTime.IsZero() &&
 		now.Sub(m.lastClickTime) <= doubleClickWindow &&
-		absInt(x-m.lastClickX) <= 2 && absInt(y-m.lastClickY) <= 1
+		absInt(x-m.lastClickX) <= doubleClickSlopX && absInt(y-m.lastClickY) <= doubleClickSlopY
 	m.lastClickTime = now
 	m.lastClickBuild = buildIdx
 	m.lastClickX = x

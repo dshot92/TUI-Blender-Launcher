@@ -48,7 +48,7 @@ func (m *Model) renderToast(maxWidth int) (string, bool) {
 	}
 
 	// Inner width is the text plus one space of padding on each side.
-	panelW := width(text) + 2 + boxBorderFrameWidth
+	panelW := width(text) + 2*panePadX + boxBorderFrameWidth
 	if panelW > maxWidth {
 		panelW = maxWidth
 	}
@@ -84,7 +84,7 @@ func (m *Model) overlayToast(frame string) string {
 	x := (m.terminalWidth - panelW) / 2
 	// Place the popup about three-quarters down the terminal, while keeping it
 	// inside the body/table area so it still never overlaps the footer/commands.
-	y := m.terminalHeight * 3 / 4
+	y := int(float64(m.terminalHeight) * toastPositionRatio)
 	if y+len(panelLines) > m.terminalHeight-footerHeight {
 		y = m.terminalHeight - footerHeight - len(panelLines)
 	}

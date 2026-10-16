@@ -119,7 +119,7 @@ func (m *Model) handleStartDownloadMsg(msg startDownloadMsg) (tea.Model, tea.Cmd
 	cmds = append(cmds, m.commands.DoDownload(msg.build))
 
 	// Make sure the ticker is running with a faster initial tick for responsiveness
-	cmds = append(cmds, tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
+	cmds = append(cmds, tea.Tick(initialTickDelay, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	}))
 
@@ -572,9 +572,9 @@ func (m *Model) contextMenuSize() (int, int) {
 			maxLabel = l
 		}
 	}
-	w := maxLabel + 6
-	if w < 16 {
-		w = 16
+	w := maxLabel + contextMenuPadding
+	if w < minContextMenuWidth {
+		w = minContextMenuWidth
 	}
 	h := len(m.contextMenuItems) + boxBorderFrameHeight
 	if h < boxBorderFrameHeight+1 {
@@ -673,9 +673,9 @@ func (m *Model) handleTickMsg(msg tickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	var nextTickTime time.Duration = time.Millisecond * 500
+	var nextTickTime time.Duration = tickIntervalIdle
 	if activeDownloads > 0 {
-		nextTickTime = time.Millisecond * 250
+		nextTickTime = tickIntervalActive
 	}
 
 	cmd := tea.Tick(nextTickTime, func(t time.Time) tea.Msg {

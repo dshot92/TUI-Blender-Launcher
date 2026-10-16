@@ -119,10 +119,10 @@ func (m *Model) overlayCompletionDropdown(frame string, boxX, boxY, boxWidth, bo
 	var valueViewLine, inputCol int
 	if twoCol {
 		valueViewLine = 2
-		inputCol = listW + 3 + 1 + width("Value: ") + 2
+		inputCol = listW + settingsColumnGap + 1 + width(valueLabel) + 2
 	} else {
 		valueViewLine = settingCount + 1 + 2
-		inputCol = 1 + width("Value: ") + 2
+		inputCol = 1 + width(valueLabel) + 2
 	}
 
 	input := setting.Inputs[settingDownloadDir]
@@ -175,12 +175,12 @@ func (m *Model) overlayCompletionDropdown(frame string, boxX, boxY, boxWidth, bo
 			dropW = w
 		}
 	}
-	dropW += 4
+	dropW += dropdownChrome
 	if dropW > boxWidth-2 {
 		dropW = boxWidth - 2
 	}
-	if dropW < 8 {
-		dropW = 8
+	if dropW < minDropdownWidth {
+		dropW = minDropdownWidth
 	}
 	inner := dropW - boxBorderFrameWidth
 	if inner < 1 {
@@ -249,8 +249,8 @@ func (m *Model) deleteConfirmLayout() deleteConfirmLayout {
 	if boxWidth > m.terminalWidth {
 		boxWidth = m.terminalWidth
 	}
-	if boxWidth < 30 {
-		boxWidth = 30
+	if boxWidth < minConfirmWidth {
+		boxWidth = minConfirmWidth
 	}
 
 	innerW := boxWidth - boxBorderFrameWidth

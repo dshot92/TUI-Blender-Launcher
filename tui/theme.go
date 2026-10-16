@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/dshot92/TUI-Blender-Launcher/config"
 	"github.com/dshot92/TUI-Blender-Launcher/model"
 )
 
@@ -33,8 +34,8 @@ type Palette struct {
 }
 
 // DefaultPaletteName is the palette selected when the config value is empty or
-// unknown.
-const DefaultPaletteName = "dracula"
+// unknown. It shares the canonical name with config.DefaultThemeName.
+const DefaultPaletteName = config.DefaultThemeName
 
 // builtinPalettes is the registry of palettes that ship with the app. Users
 // pick one via the `theme` key in config.toml.

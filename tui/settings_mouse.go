@@ -138,7 +138,7 @@ func (m *Model) handleSettingsMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	detailX := lay.contentX
 	detailTopY := lay.contentY
 	if lay.twoCol {
-		detailX = lay.contentX + lay.listW + 3
+		detailX = lay.contentX + lay.listW + settingsColumnGap
 	} else {
 		detailTopY = lay.contentY + settingCount + 1
 	}
@@ -154,17 +154,16 @@ func (m *Model) handleSettingsMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 func (m *Model) settingsValueClick(detailRelX int) {
 	s := &m.Settings
 
-	const labelWidth = 7     // "Value: "
-	valueX := 1 + labelWidth // one-cell inset plus the label
+	valueX := 1 + width(valueLabel) // one-cell inset plus the label
 	if detailRelX < valueX {
 		return
 	}
 	relX := detailRelX - valueX
 
 	lay := m.settingsModalLayout()
-	avail := lay.detailW - 2 - labelWidth
-	if avail < 8 {
-		avail = 8
+	avail := lay.detailW - 2*panePadX - width(valueLabel)
+	if avail < minValueWidth {
+		avail = minValueWidth
 	}
 
 	switch s.FocusIndex {

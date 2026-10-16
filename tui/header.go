@@ -26,7 +26,7 @@ func renderHeader(m *Model) string {
 	}
 
 	meta := ""
-	if m.terminalWidth >= 46 {
+	if m.terminalWidth >= headerMetaMinWidth {
 		parts := []string{fmt.Sprintf("%d builds", len(m.List.Builds))}
 		if active > 0 {
 			parts = append(parts, fmt.Sprintf("%d active", active))

@@ -45,7 +45,41 @@ const (
 	// Maximum completion candidates listed under the Download Directory row
 	// before the rest are summarised as "… +N more".
 	settingsMaxDirMatches = 6
+
+	// Minimum width of the settings value area below which a value would be
+	// unreadable, plus the slack subtracted when sizing a text input so it never
+	// wraps the detail line.
+	minValueWidth   = 8
+	minInputWidth   = 10
+	valueInputSlack = 5
+
+	// Minimum width of the side-by-side detail pane, and of the confirm modal.
+	minDetailPaneWidth = 30
+	minConfirmWidth    = 30
+
+	// Tallest the detail pane may grow when it is stacked below the list.
+	maxStackedDetailHeight = 12
+
+	// Build-completion dropdown sizing: chrome added around the widest
+	// candidate, and the minimum dropdown width.
+	dropdownChrome   = 4
+	minDropdownWidth = 8
+
+	// Context menu chrome: horizontal padding around the widest entry, and the
+	// minimum menu width.
+	contextMenuPadding  = 6
+	minContextMenuWidth = 16
+
+	// Below this width the header drops its build-count/version metadata.
+	headerMetaMinWidth = minTermWidth + 1
+
+	// Share of the terminal height at which the transient toast is anchored.
+	toastPositionRatio = 0.75
 )
+
+// valueLabel is the "Value: " prefix shown before a settings value. Its display
+// width is reused to size the value area and to anchor the completion dropdown.
+const valueLabel = "Value: "
 
 // View states
 type viewState int

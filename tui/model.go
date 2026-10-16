@@ -185,7 +185,7 @@ func (m *Model) computeLayout() {
 		if w >= minDetailWidth {
 			left := int(float64(w) * (1 - detailRatio))
 			right := w - left - paneGap
-			if right >= 30 && colWidthForBox(left) >= fitColWidth {
+			if right >= minDetailPaneWidth && colWidthForBox(left) >= fitColWidth {
 				li.detailVisible = true
 				li.detailStacked = false
 				li.listBoxWidth = left
@@ -194,12 +194,12 @@ func (m *Model) computeLayout() {
 		}
 		// Otherwise dock the panel below the list, if there is vertical room.
 		if !li.detailVisible && li.bodyHeight >= minBuildsHeight+minDetailHeight {
-			detailH := li.bodyHeight * 2 / 5
+			detailH := int(float64(li.bodyHeight) * detailRatio)
 			if detailH < minDetailHeight {
 				detailH = minDetailHeight
 			}
-			if detailH > 12 {
-				detailH = 12
+			if detailH > maxStackedDetailHeight {
+				detailH = maxStackedDetailHeight
 			}
 			if li.bodyHeight-detailH < minBuildsHeight {
 				detailH = li.bodyHeight - minBuildsHeight

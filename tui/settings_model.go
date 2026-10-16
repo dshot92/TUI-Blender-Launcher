@@ -280,9 +280,9 @@ func (m SettingsModel) renderDetail(w int) string {
 	}
 
 	// The pane is inset by one column on each side for breathing room.
-	contentW := w - 2
-	if contentW < 8 {
-		contentW = 8
+	contentW := w - 2*panePadX
+	if contentW < minValueWidth {
+		contentW = minValueWidth
 	}
 
 	lines := []string{
@@ -313,10 +313,10 @@ func (m SettingsModel) renderDetail(w int) string {
 
 // detailValue renders the "Value: ..." line for the focused setting.
 func (m SettingsModel) detailValue(w int, labelStyle, valueStyle lp.Style) string {
-	label := labelStyle.Render("Value: ")
-	avail := w - width(label)
-	if avail < 8 {
-		avail = 8
+	label := labelStyle.Render(valueLabel)
+	avail := w - width(valueLabel)
+	if avail < minValueWidth {
+		avail = minValueWidth
 	}
 
 	switch m.FocusIndex {
@@ -698,9 +698,9 @@ func (m *SettingsModel) updateInputWidths() {
 	_, detailW, _ := m.panes()
 	// Reserve room for the "Value: " label, the input prompt and cursor, plus a
 	// little slack so the input never wraps the detail line.
-	iw := detailW - width("Value: ") - 5
-	if iw < 10 {
-		iw = 10
+	iw := detailW - width(valueLabel) - valueInputSlack
+	if iw < minInputWidth {
+		iw = minInputWidth
 	}
 	for i := range m.Inputs {
 		m.Inputs[i].Width = iw

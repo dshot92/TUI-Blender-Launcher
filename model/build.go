@@ -89,6 +89,13 @@ func (t Timestamp) Time() time.Time {
 	return time.Time(t)
 }
 
+// shortHashLen is the number of hash characters used in a build ID.
+const shortHashLen = 8
+
+// buildColumnCount is the number of sortable table columns. It must match
+// len(buildColumnNames) in the tui package.
+const buildColumnCount = 7
+
 // BlenderBuild represents the structure of a single build entry from the API
 // plus internal state for the TUI.
 type BlenderBuild struct {
@@ -115,14 +122,14 @@ type BlenderBuild struct {
 }
 
 // ID returns a stable identifier for the build: its version, optionally
-// suffixed with the short (8-char) commit hash when present.
+// suffixed with the short commit hash when present.
 func (b BlenderBuild) ID() string {
 	if b.Hash == "" {
 		return b.Version
 	}
 	h := b.Hash
-	if len(h) > 8 {
-		h = h[:8]
+	if len(h) > shortHashLen {
+		h = h[:shortHashLen]
 	}
 	return b.Version + "-" + h
 }
@@ -226,7 +233,10 @@ func SortBuilds(builds []BlenderBuild, column int, reverse bool) []BlenderBuild 
 	copy(sortedBuilds, builds)
 
 	// Order of columns to compare as tiebreakers (all columns, ascending).
-	allColumns := []int{0, 1, 2, 3, 4, 5, 6}
+	allColumns := make([]int, buildColumnCount)
+	for i := range allColumns {
+		allColumns[i] = i
+	}
 
 	sort.SliceStable(sortedBuilds, func(i, j int) bool {
 		a, b := sortedBuilds[i], sortedBuilds[j]

@@ -15,6 +15,10 @@ import (
 // AppName is used for the config directory
 const AppName = "tui-blender-launcher" // Use lowercase app name
 
+// DefaultThemeName is the palette selected when no (valid) theme is configured.
+// The tui package re-exports it as DefaultPaletteName.
+const DefaultThemeName = "dracula"
+
 // Config holds the application settings.
 type Config struct {
 	DownloadDir   string   `toml:"download_dir"`
@@ -57,7 +61,7 @@ func DefaultConfig() Config {
 		VersionFilter: "4.x",                   // Show the current 4.x line by default
 		BuildType:     "daily",                 // Default to daily builds
 		ReleaseTypes:  model.AllReleaseTypes(), // Show every release type by default
-		Theme:         "dracula",               // Default UI palette
+		Theme:         DefaultThemeName,        // Default UI palette
 		UUID:          uuid.New().String(),     // Generate a new UUID
 	}
 }
@@ -111,7 +115,7 @@ func LoadConfig() (Config, error) {
 
 	// Ensure a palette is always selected.
 	if cfg.Theme == "" {
-		cfg.Theme = "dracula"
+		cfg.Theme = DefaultThemeName
 	}
 
 	// Normalize the build type so an unknown value never reaches the API or UI.

@@ -33,6 +33,30 @@ var ErrIdleTimeout = errors.New("download timed out: connection idle for too lon
 // versionMetaFilename is the name of the metadata file saved in the extracted directory.
 const versionMetaFilename = "version.json"
 
+// extractBufferSize is the copy buffer used while extracting archive entries.
+const extractBufferSize = 4 * 1024 * 1024
+
+// extractMaxWorkers bounds the number of concurrent extraction workers.
+const extractMaxWorkers = 4
+
+// progressTickInterval is how often the download progress callback fires.
+const progressTickInterval = 200 * time.Millisecond
+
+// maxChecksumBytes caps how much of a .sha256 sidecar is read.
+const maxChecksumBytes = 4096
+
+// archiveTimestampLayout names builds moved into the .oldbuilds directory.
+const archiveTimestampLayout = "20060102_150405"
+
+// Filesystem permissions used while downloading and extracting: directories we
+// own are private, the download directory keeps its conventional mode, and the
+// metadata file is world-readable.
+const (
+	privateDirPerm   os.FileMode = 0o750
+	publicDirPerm    os.FileMode = 0o755
+	metadataFilePerm os.FileMode = 0o644
+)
+
 // ProgressCallback reports download progress: bytes downloaded, total size,
 // and the current transfer speed in bytes/sec.
 type ProgressCallback func(downloadedBytes, totalBytes int64, speedBytesPerSec float64)
@@ -49,7 +73,7 @@ const downloadTimeout = 30 * time.Minute
 func downloadFile(url string, destFilePath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
 	// Create download directory if it doesn't exist
 	downloadDir := filepath.Dir(destFilePath)
-	if err := os.MkdirAll(downloadDir, 0755); err != nil {
+	if err := os.MkdirAll(downloadDir, publicDirPerm); err != nil {
 		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
@@ -79,7 +103,7 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 	// Start download
 	resp := client.Do(req)
 
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(progressTickInterval)
 	defer ticker.Stop()
 
 	timeout := time.NewTimer(downloadTimeout)
@@ -166,7 +190,7 @@ func fetchExpectedChecksum(checksumURL string, cancelCh <-chan struct{}) (string
 	}
 
 	// A checksum file is tiny; cap the read defensively.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumBytes))
 	if err != nil {
 		return "", err
 	}
@@ -232,9 +256,8 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	}
 	defer file.Close()
 
-	// Increase buffer size for better performance
-	const bufferSize = 4 * 1024 * 1024 // 4MB buffer for better throughput
-	bufferedFile := bufio.NewReaderSize(file, bufferSize)
+	// A large buffer improves throughput on these multi-hundred-MB archives.
+	bufferedFile := bufio.NewReaderSize(file, extractBufferSize)
 
 	// progressCb may be invoked from the xz feeder goroutine (via the
 	// progress tracker) and from this goroutine. Serialize the calls and
@@ -289,13 +312,12 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		tarInput = xzReader
 	}
 
-	bufferedXzReader := bufio.NewReaderSize(tarInput, bufferSize)
+	bufferedXzReader := bufio.NewReaderSize(tarInput, extractBufferSize)
 	tarReader := tar.NewReader(bufferedXzReader)
 
-	copyBuffer := make([]byte, bufferSize)
+	copyBuffer := make([]byte, extractBufferSize)
 
-	const maxWorkers = 4
-	sem := make(chan struct{}, maxWorkers)
+	sem := make(chan struct{}, extractMaxWorkers)
 	var wg sync.WaitGroup
 	var firstErr error
 	var errLock sync.Mutex
@@ -360,7 +382,7 @@ extractLoop:
 			}
 		case tar.TypeReg:
 			if header.Size > 0 {
-				if header.Size <= int64(bufferSize) {
+				if header.Size <= int64(extractBufferSize) {
 					fileContents := make([]byte, header.Size)
 					if _, err := io.ReadFull(tarReader, fileContents); err != nil {
 						if errors.Is(err, ErrCancelled) {
@@ -382,7 +404,7 @@ extractLoop:
 							return
 						}
 
-						if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+						if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 							setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 							return
 						}
@@ -393,7 +415,7 @@ extractLoop:
 						}
 					}(targetPath, header.Mode, fileContents)
 				} else {
-					if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+					if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 						setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 						break extractLoop
 					}
@@ -407,7 +429,7 @@ extractLoop:
 					// Wrap tarReader with cancellation check
 					cancelReader := &CancelableReader{Reader: tarReader, CancelCh: cancelCh}
 
-					bufferedWriter := bufio.NewWriterSize(outFile, bufferSize)
+					bufferedWriter := bufio.NewWriterSize(outFile, extractBufferSize)
 					if _, err := io.CopyBuffer(bufferedWriter, cancelReader, copyBuffer); err != nil {
 						outFile.Close()
 						if errors.Is(err, ErrCancelled) {
@@ -430,7 +452,7 @@ extractLoop:
 					}
 				}
 			} else {
-				if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+				if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 					setFirstError(fmt.Errorf("failed to create parent dir for empty file %s: %w", targetPath, err))
 					break extractLoop
 				}
@@ -441,7 +463,7 @@ extractLoop:
 				}
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+			if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 				setFirstError(fmt.Errorf("failed to create parent dir for symlink %s: %w", targetPath, err))
 				break extractLoop
 			}
@@ -504,7 +526,7 @@ func saveVersionMetadata(build model.BlenderBuild, extractedDir string) error {
 		return fmt.Errorf("failed to marshal build metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metaPath, jsonData, 0644); err != nil {
+	if err := os.WriteFile(metaPath, jsonData, metadataFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", versionMetaFilename, err)
 	}
 	return nil
@@ -525,8 +547,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 	}
 
 	// Create a buffer for copying file contents
-	const bufferSize = 4 * 1024 * 1024 // 4MB buffer
-	copyBuffer := make([]byte, bufferSize)
+	copyBuffer := make([]byte, extractBufferSize)
 
 	// progressCb is invoked from multiple extraction workers, so serialize
 	// the calls to keep the callback contract well-defined.
@@ -549,8 +570,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 	var processedSize uint64
 	var processedSizeLock sync.Mutex
 
-	const maxWorkers = 4
-	sem := make(chan struct{}, maxWorkers)
+	sem := make(chan struct{}, extractMaxWorkers)
 	var wg sync.WaitGroup
 	var firstErr error
 	var errLock sync.Mutex
@@ -592,7 +612,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 
 		if file.FileInfo().IsDir() {
 			// Create directory
-			if err := os.MkdirAll(targetPath, 0750); err != nil {
+			if err := os.MkdirAll(targetPath, privateDirPerm); err != nil {
 				setFirstError(fmt.Errorf("failed to create directory %s: %w", targetPath, err))
 				break
 			}
@@ -600,13 +620,13 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 		}
 
 		// Make sure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 			setFirstError(fmt.Errorf("failed to create parent directory for %s: %w", targetPath, err))
 			break
 		}
 
 		// Small files can be read entirely into memory
-		if file.UncompressedSize64 <= uint64(bufferSize) {
+		if file.UncompressedSize64 <= uint64(extractBufferSize) {
 			wg.Add(1)
 			go func(file *zip.File, targetPath string) {
 				defer wg.Done()
@@ -781,10 +801,10 @@ func findRootDirInTarXz(archivePath string) (string, error) {
 // directory under downloadBaseDir. Shared by build replacement and deletion.
 func ArchiveBuildDir(downloadBaseDir, buildDir string) error {
 	oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
-	if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
+	if err := os.MkdirAll(oldBuildsDir, privateDirPerm); err != nil {
 		return fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
 	}
-	timestamp := time.Now().Format("20060102_150405")
+	timestamp := time.Now().Format(archiveTimestampLayout)
 	oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(buildDir), timestamp)
 	return os.Rename(buildDir, filepath.Join(oldBuildsDir, oldBuildName))
 }
@@ -801,7 +821,7 @@ func DownloadAndExtractBuild(
 	// 1. Download
 	downloadFileName := filepath.Base(build.DownloadURL)
 	downloadTempDir := filepath.Join(downloadBaseDir, DownloadingDir)
-	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
+	if err := os.MkdirAll(downloadTempDir, privateDirPerm); err != nil {
 		return "", fmt.Errorf("failed to create download temp dir: %w", err)
 	}
 	downloadPath := filepath.Join(downloadTempDir, downloadFileName)
