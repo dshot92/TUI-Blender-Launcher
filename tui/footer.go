@@ -81,6 +81,9 @@ func (m *Model) renderBuildFooter() string {
 			case model.StateOnline, model.StateCancelled, model.StateFailed:
 				contextual = append(contextual, hint{PrimaryKey(CmdDownloadBuild), "Download"})
 			}
+			if build.DownloadURL != "" && build.Status != model.StateLocal {
+				contextual = append(contextual, hint{PrimaryKey(CmdOpenURL), "Open URL"})
+			}
 		}
 	}
 

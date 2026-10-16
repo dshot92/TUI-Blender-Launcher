@@ -62,6 +62,26 @@ func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleOpenURL opens the selected build's download URL in the default browser.
+func (m *Model) handleOpenURL() (tea.Model, tea.Cmd) {
+	selectedBuild := m.List.GetSelectedBuild()
+	if selectedBuild == nil || selectedBuild.DownloadURL == "" {
+		return m, nil
+	}
+	return m, openURLCmd(selectedBuild.DownloadURL)
+}
+
+// openURLCmd opens url in the user's default browser, reporting the outcome as
+// a transient toast.
+func openURLCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		if err := local.OpenURL(url); err != nil {
+			return errMsg{fmt.Errorf("failed to open download link: %w", err)}
+		}
+		return statusMsg{text: "opened download link"}
+	}
+}
+
 // handleStartDownload initiates a download for the selected build (from key press)
 func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	selectedBuild := m.List.GetSelectedBuild()

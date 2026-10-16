@@ -34,6 +34,7 @@ type Style struct {
 	Muted    lp.Style
 	Label    lp.Style
 	Value    lp.Style
+	Link     lp.Style
 	HelpKey  lp.Style
 	HelpDesc lp.Style
 	HelpSep  lp.Style
@@ -116,6 +117,11 @@ func NewStyleFromPalette(p Palette) Style {
 
 		Value: lp.NewStyle().
 			Foreground(fg),
+
+		// Link marks a clickable URL in the detail pane.
+		Link: lp.NewStyle().
+			Foreground(accent).
+			Underline(true),
 
 		HelpKey: lp.NewStyle().
 			Foreground(accent).

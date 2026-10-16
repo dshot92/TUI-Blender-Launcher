@@ -183,6 +183,34 @@ func OpenFileExplorer(dir string) error {
 	return cmd.Start()
 }
 
+// OpenURL opens url in the user's default browser.
+func OpenURL(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", url)
+		} else if _, err := exec.LookPath("gnome-open"); err == nil {
+			cmd = exec.Command("gnome-open", url)
+		} else if _, err := exec.LookPath("kde-open"); err == nil {
+			cmd = exec.Command("kde-open", url)
+		} else {
+			cmd = exec.Command("xdg-open", url)
+		}
+	}
+
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	detachProcess(cmd)
+
+	return cmd.Start()
+}
+
 // CleanOldBuilds removes all builds from the .oldbuilds directory.
 // Returns the number of cleaned builds and any error encountered.
 func CleanOldBuilds(downloadDir string) (int, error) {

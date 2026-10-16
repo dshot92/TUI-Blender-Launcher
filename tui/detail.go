@@ -21,7 +21,7 @@ func (m *Model) renderDetailPane(boxWidth, height int) string {
 
 	var content string
 	if build := m.List.GetSelectedBuild(); build != nil {
-		content = strings.Join(m.detailLines(*build, innerWidth), "\n")
+		content = strings.Join(m.detailBlock(*build, innerWidth).lines, "\n")
 	} else {
 		content = centerBlock(m.Style.Empty.Render("Select a build to see details"), innerWidth, avail)
 	}
@@ -29,8 +29,17 @@ func (m *Model) renderDetailPane(boxWidth, height int) string {
 	return renderBox("", title, content, boxWidth, height, lp.Color(m.Style.Palette.Border))
 }
 
-// detailLines builds the labelled lines shown in the detail pane.
-func (m *Model) detailLines(build model.BlenderBuild, w int) []string {
+// detailBlock holds the rendered lines for the detail pane together with the
+// position of the download-URL row, so a mouse click can be mapped back to it.
+type detailBlock struct {
+	lines   []string
+	urlLine int    // index of the first URL row within lines, or -1
+	urlRows int    // number of wrapped URL rows
+	url     string // the download URL, when present
+}
+
+// detailBlock builds the labelled lines shown in the detail pane.
+func (m *Model) detailBlock(build model.BlenderBuild, w int) detailBlock {
 	p := m.Style.Palette
 	const labelW = 11
 
@@ -54,6 +63,28 @@ func (m *Model) detailLines(build model.BlenderBuild, w int) []string {
 	}
 	if build.FileName != "" {
 		lines = append(lines, row("File", build.FileName))
+	}
+
+	block := detailBlock{urlLine: -1}
+	// The download link, shown for any build that can be fetched online. Long
+	// URLs are hard-wrapped (and indented) so the whole link stays readable.
+	if build.DownloadURL != "" {
+		valueW := w - labelW
+		if valueW < 1 {
+			valueW = 1
+		}
+		chunks := hardWrap(build.DownloadURL, valueW)
+		block.urlLine = len(lines)
+		block.urlRows = len(chunks)
+		block.url = build.DownloadURL
+		for i, chunk := range chunks {
+			if i == 0 {
+				lines = append(lines, m.Style.Label.Width(labelW).Render("URL")+
+					m.Style.Link.Render(chunk))
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+m.Style.Link.Render(chunk))
+			}
+		}
 	}
 
 	// Live download information.
@@ -81,7 +112,56 @@ func (m *Model) detailLines(build model.BlenderBuild, w int) []string {
 		}
 	}
 
-	return lines
+	block.lines = lines
+	return block
+}
+
+// urlAt maps terminal coordinates to the download-URL row of the info panel.
+// It returns the URL and true only when (x, y) lands on that row and the row is
+// actually visible. It performs no I/O, so it is safe to call on every mouse
+// event and straightforward to test.
+func (m *Model) urlAt(x, y int) (string, bool) {
+	if !m.layout.detailVisible {
+		return "", false
+	}
+	build := m.List.GetSelectedBuild()
+	if build == nil || build.DownloadURL == "" {
+		return "", false
+	}
+
+	innerW := m.layout.detailBoxWidth - boxBorderFrameWidth
+	if innerW < 1 {
+		return "", false
+	}
+	block := m.detailBlock(*build, innerW)
+	if block.urlLine < 0 {
+		return "", false
+	}
+
+	// The URL row must not have been clipped by the box height.
+	if block.urlLine+block.urlRows-1 >= m.layout.detailBoxHeight-boxBorderFrameHeight {
+		return "", false
+	}
+
+	// Detail pane origin within the frame. Content starts one row below the
+	// box's top border and one column right of its left border.
+	top := headerBoxHeight
+	left := 0
+	if m.layout.detailStacked {
+		top += m.layout.listBoxHeight
+	} else {
+		left = m.layout.listBoxWidth + paneGap
+	}
+	first := top + 1 + block.urlLine
+	last := first + block.urlRows - 1
+
+	if y < first || y > last {
+		return "", false
+	}
+	if x < left+1 || x >= left+1+innerW {
+		return "", false
+	}
+	return block.url, true
 }
 
 // orDash returns s, or a muted placeholder when empty.

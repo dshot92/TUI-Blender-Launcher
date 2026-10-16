@@ -76,6 +76,7 @@ const (
 	CmdEnd            // Add End command
 	CmdCleanOldBuilds // Add command for cleaning old builds
 	CmdToggleDetail   // Show/hide the build info panel
+	CmdOpenURL        // Open the selected build's download URL in a browser
 )
 
 // KeyCommand defines a keyboard command with its key binding and description
@@ -110,6 +111,7 @@ var (
 		{Type: CmdHome, Keys: []string{"home"}, Description: "Go to first item"},
 		{Type: CmdEnd, Keys: []string{"end"}, Description: "Go to last item"},
 		{Type: CmdToggleDetail, Keys: []string{"tab"}, Description: "Toggle build info panel"},
+		{Type: CmdOpenURL, Keys: []string{"u"}, Description: "Open build download URL"},
 	}
 
 	// Settings view commands

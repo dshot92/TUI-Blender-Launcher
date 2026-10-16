@@ -37,6 +37,38 @@ func capitalize(s string) string {
 	return string(r)
 }
 
+// hardWrap breaks s into lines of at most max display columns, splitting
+// mid-token rather than on spaces (unlike wrapText). It is intended for
+// spaceless strings such as URLs, which wrapText would leave on a single
+// over-long line. Input is expected to be plain text (no ANSI escapes).
+func hardWrap(s string, max int) []string {
+	if max <= 0 || s == "" {
+		return []string{s}
+	}
+	var (
+		lines []string
+		cur   strings.Builder
+		curW  int
+	)
+	for _, r := range s {
+		rw := width(string(r))
+		if curW+rw > max && curW > 0 {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			curW = 0
+		}
+		cur.WriteRune(r)
+		curW += rw
+	}
+	if cur.Len() > 0 {
+		lines = append(lines, cur.String())
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
+}
+
 // wrapText breaks s into lines of at most max display columns, splitting on
 // spaces. A word longer than max is left on its own line rather than split. It
 // keeps settings help text visible on narrow panes instead of letting the box

@@ -225,6 +225,15 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m.handleTickMsg(msg)
 
+	case tea.MouseMsg:
+		// A left click on the download-URL row of the info panel opens the link.
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if url, ok := m.urlAt(msg.X, msg.Y); ok {
+				return m, openURLCmd(url)
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		// Check for app-level commands first
 		for _, command := range GetCommandsForView(viewList) {
@@ -263,6 +272,8 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					return m, nil
+				case CmdOpenURL:
+					return m.handleOpenURL()
 				}
 			}
 		}
