@@ -11,6 +11,11 @@ type Model struct {
 	err      error
 	status   string
 
+	// statusToken identifies the most recent transient status message. Expiry
+	// timers carry the token they were scheduled for so a stale timer cannot
+	// clear a newer status.
+	statusToken int64
+
 	// Layout
 	terminalWidth  int
 	terminalHeight int

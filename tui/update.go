@@ -4,9 +4,13 @@ import (
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// statusLifetime is how long a transient status message stays on screen.
+const statusLifetime = 5 * time.Second
 
 // Init initializes the model
 func (m *Model) Init() tea.Cmd {
@@ -47,6 +51,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		m.status = msg.text
 		m.err = nil
+		// Schedule the status line to expire. Bump the token so any earlier
+		// timer becomes a no-op.
+		m.statusToken++
+		token := m.statusToken
+		return m, tea.Tick(statusLifetime, func(time.Time) tea.Msg {
+			return clearStatusMsg{token: token}
+		})
+
+	case clearStatusMsg:
+		// Only clear if no newer status message has replaced this one.
+		if msg.token == m.statusToken {
+			m.status = ""
+		}
 		return m, nil
 	}
 

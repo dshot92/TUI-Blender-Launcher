@@ -39,6 +39,11 @@ type (
 	// Transient success/status message
 	statusMsg struct{ text string }
 
+	// clearStatusMsg clears the transient status line after it expires. The
+	// token matches the statusMsg it was scheduled for, so a newer status
+	// message is never cleared by an older timer.
+	clearStatusMsg struct{ token int64 }
+
 	// Timer message
 	tickMsg time.Time
 )

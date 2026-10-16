@@ -153,3 +153,33 @@ func TestSaveSettingsAndReturnPreservesDownloads(t *testing.T) {
 		t.Fatalf("download state lost after SaveSettingsAndReturn: %+v", states)
 	}
 }
+
+func TestStatusMessageExpiry(t *testing.T) {
+	m := &Model{}
+
+	// A status message records the current token.
+	_, _ = m.Update(statusMsg{text: "first"})
+	if m.status != "first" {
+		t.Fatalf("status = %q, want %q", m.status, "first")
+	}
+	firstToken := m.statusToken
+
+	// A newer status message bumps the token.
+	_, _ = m.Update(statusMsg{text: "second"})
+	if m.statusToken == firstToken {
+		t.Fatal("expected token to change for a new status message")
+	}
+	secondToken := m.statusToken
+
+	// A stale timer must not clear the newer status.
+	_, _ = m.Update(clearStatusMsg{token: firstToken})
+	if m.status != "second" {
+		t.Errorf("stale clear wiped current status: %q", m.status)
+	}
+
+	// The timer for the current status clears it.
+	_, _ = m.Update(clearStatusMsg{token: secondToken})
+	if m.status != "" {
+		t.Errorf("matching clear did not wipe status: %q", m.status)
+	}
+}
