@@ -4,6 +4,7 @@ import (
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -87,14 +88,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if we need to handle specific keys here that perform "Controllers" logic
 		// that affects the whole app (like changing view)
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			return m.updateSettingsViewController(keyMsg, cmd)
+			mdl, c := m.updateSettingsViewController(keyMsg, cmd)
+			// Validate the version filter live as the user types or navigates,
+			// so a malformed value surfaces in the toast instead of being
+			// silently ignored.
+			m.syncVersionFilterFeedback()
+			return mdl, c
 		}
+		m.syncVersionFilterFeedback()
 		return m, cmd
 
 	default: // viewList
 		// Handle list logic
 		return m.updateListViewController(msg)
 	}
+}
+
+// syncVersionFilterFeedback validates the Version Filter while its settings row
+// is focused, surfacing a malformed value as a live error toast. The message is
+// cleared once the row loses focus (or the value becomes valid), so it never
+// lingers in the list view.
+func (m *Model) syncVersionFilterFeedback() {
+	inSettings := m.currentView == viewSettings || m.currentView == viewInitialSetup
+	if inSettings && m.Settings.FocusIndex == settingVersionFilter {
+		v := strings.TrimSpace(m.Settings.Inputs[settingVersionFilter].Value())
+		if _, err := model.ParseVersionFilter(v); err != nil {
+			m.filterErr = fmt.Errorf("invalid version filter format '%s': %w", v, err)
+			return
+		}
+	}
+	m.filterErr = nil
 }
 
 // updateSettingsViewController handles app-level logic for settings view

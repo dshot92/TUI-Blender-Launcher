@@ -11,6 +11,11 @@ type Model struct {
 	err      error
 	status   string
 
+	// filterErr is transient validation feedback for the Version Filter while
+	// its settings row is focused. It is surfaced as an error toast so a
+	// malformed value is shown instead of being silently ignored.
+	filterErr error
+
 	// statusToken identifies the most recent transient status message. Expiry
 	// timers carry the token they were scheduled for so a stale timer cannot
 	// clear a newer status.
@@ -114,12 +119,9 @@ func (m *Model) computeLayout() {
 	w, h := m.terminalWidth, m.terminalHeight
 	li := layoutInfo{width: w, height: h}
 
-	statusH := 0
-	if m.err != nil || m.status != "" {
-		statusH = 1
-	}
-
-	li.bodyHeight = h - headerBoxHeight - footerHeight - statusH
+	// The transient status/error toast is layered over the bottom of the frame
+	// rather than reserving a row, so the body always gets the full height.
+	li.bodyHeight = h - headerBoxHeight - footerHeight
 	if li.bodyHeight < boxBorderFrameHeight+2 {
 		li.bodyHeight = boxBorderFrameHeight + 2
 	}

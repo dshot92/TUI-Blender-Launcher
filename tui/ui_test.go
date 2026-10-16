@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"TUI-Blender-Launcher/model"
 
 	tea "github.com/charmbracelet/bubbletea"
+	lp "github.com/charmbracelet/lipgloss"
 )
 
 var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
@@ -514,5 +516,196 @@ func TestSettingsInputsAreThemed(t *testing.T) {
 	s.updateFocusStyles()
 	if s.Inputs[0].Cursor.Blink {
 		t.Fatalf("focused input cursor should be a visible block")
+	}
+}
+
+func TestToastPanelShowsStatusInBothViews(t *testing.T) {
+	for _, view := range []struct {
+		name  string
+		state viewState
+	}{
+		{"list", viewList},
+		{"settings", viewSettings},
+	} {
+		m := sampleModel()
+		m.currentView = view.state
+		m.UpdateWindowSize(120, 34)
+		m.status = "no old builds to clean"
+
+		out := plain(m.View())
+		if !strings.Contains(out, "no old builds to clean") {
+			t.Fatalf("%s: toast missing status text:\n%s", view.name, out)
+		}
+		if !strings.Contains(out, "✓") {
+			t.Fatalf("%s: toast missing success glyph:\n%s", view.name, out)
+		}
+		assertExactWidth(t, view.name+" toast", out, 120)
+	}
+}
+
+func TestToastPrefersErrorOverStatus(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+	m.status = "all good"
+	m.err = errors.New("download failed")
+
+	out := plain(m.View())
+	if !strings.Contains(out, "download failed") {
+		t.Fatalf("toast missing error text:\n%s", out)
+	}
+	if strings.Contains(out, "all good") {
+		t.Fatalf("status should be hidden while an error is shown:\n%s", out)
+	}
+	if !strings.Contains(out, "✖") {
+		t.Fatalf("toast missing error glyph:\n%s", out)
+	}
+	assertExactWidth(t, "error toast", out, 120)
+}
+
+func TestToastHiddenWithoutMessage(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+
+	if _, ok := m.renderToast(m.terminalWidth - 2); ok {
+		t.Fatal("toast should not render without a status or error")
+	}
+	out := plain(m.View())
+	if strings.Contains(out, "✓") || strings.Contains(out, "✖") {
+		t.Fatalf("no toast expected in a clean frame:\n%s", out)
+	}
+}
+
+func TestToastRespectsTheme(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+	m.status = "hello"
+
+	for _, name := range PaletteNames() {
+		p := ResolvePalette(name)
+		m.setTheme(p)
+
+		text, border, ok := m.toastMessage()
+		if !ok || text == "" {
+			t.Fatalf("%s: expected a themed status message", name)
+		}
+		if want := lp.Color(p.Accent); border != want {
+			t.Fatalf("%s: status border = %q, want accent %q", name, border, want)
+		}
+		if lp.Color(p.Accent) == lp.Color(p.Success) {
+			t.Fatalf("%s: accent should differ from the green success color", name)
+		}
+	}
+
+	// Errors use the palette's error color instead.
+	m.setTheme(ResolvePalette("nord"))
+	m.err = errors.New("boom")
+	_, border, ok := m.toastMessage()
+	if !ok {
+		t.Fatal("expected an error toast")
+	}
+	if want := lp.Color(ResolvePalette("nord").Error); border != want {
+		t.Fatalf("error border = %q, want %q", border, want)
+	}
+}
+
+func TestToastLongStatusFitsWidth(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(60, 20)
+	m.status = strings.Repeat("wide message ", 20)
+
+	assertExactWidth(t, "long toast", plain(m.View()), 60)
+}
+
+func TestOverlayBlockPreservesContent(t *testing.T) {
+	base := "ABCDEFGHIJ"
+	block := "\x1b[31mXY\x1b[0m" // 2 columns wide once stripped
+
+	got := overlayBlock(base, block, 4, 0, 10)
+	if plain(got) != "ABCDXYGHIJ" {
+		t.Fatalf("overlay = %q, want %q", plain(got), "ABCDXYGHIJ")
+	}
+	if width(got) != 10 {
+		t.Fatalf("overlay width = %d, want 10", width(got))
+	}
+
+	// Right-aligned clamping must not overflow the line either.
+	got = overlayBlock(base, block, 100, 0, 10)
+	if width(got) != 10 {
+		t.Fatalf("clamped overlay width = %d, want 10", width(got))
+	}
+}
+
+func TestToastKeepsFooterBehindIt(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+	m.status = "no old builds to clean"
+
+	out := plain(m.View())
+	if !strings.Contains(out, "no old builds to clean") {
+		t.Fatalf("toast missing:\n%s", out)
+	}
+	// Footer hints to the left of the centered panel must remain visible.
+	if !strings.Contains(out, "Fetch") {
+		t.Fatalf("footer content behind the toast was erased:\n%s", out)
+	}
+	assertExactWidth(t, "overlay keeps width", out, 120)
+}
+
+func TestVersionFilterLiveValidation(t *testing.T) {
+	m := sampleModel()
+	m.UpdateWindowSize(120, 34)
+
+	// Open settings and focus the Version Filter row.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	for i := 0; i < settingVersionFilter; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if m.Settings.FocusIndex != settingVersionFilter {
+		t.Fatalf("focus = %d, want version filter", m.Settings.FocusIndex)
+	}
+
+	// Enter edit mode and type a malformed value.
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.Settings.EditMode {
+		t.Fatal("expected to be editing the version filter")
+	}
+	for _, r := range "abc" {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	if m.filterErr == nil {
+		t.Fatal("expected a live validation error for an invalid filter")
+	}
+	out := plain(m.View())
+	if !strings.Contains(out, "invalid version filter") {
+		t.Fatalf("toast should show the invalid version text:\n%s", out)
+	}
+	assertExactWidth(t, "invalid filter toast", out, 120)
+
+	// Correcting to a valid value clears the message while still editing.
+	for i := 0; i < 3; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	for _, r := range "5.x" {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	if m.filterErr != nil {
+		t.Fatalf("valid filter should clear the error, got %v", m.filterErr)
+	}
+	if strings.Contains(plain(m.View()), "invalid version filter") {
+		t.Fatalf("toast should be gone for a valid filter:\n%s", plain(m.View()))
+	}
+
+	// Reintroduce the error, then move off the row: it must clear.
+	for _, r := range "abc" {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	if m.filterErr == nil {
+		t.Fatal("expected the error to return for an invalid filter")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // commit the edit
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})  // move to the next row
+	if m.filterErr != nil {
+		t.Fatalf("filter error should clear after leaving the row: %v", m.filterErr)
 	}
 }

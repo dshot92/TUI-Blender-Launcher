@@ -7,9 +7,9 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// renderPageForView assembles the full frame: header box, optional status line,
-// the body (builds + optional detail pane, or the settings modal), and the
-// footer.
+// renderPageForView assembles the full frame: header box, the body (builds +
+// optional detail pane, or the settings modal), and the footer. Any transient
+// status/error message is layered over the bottom of the frame as a toast.
 func (m *Model) renderPageForView() string {
 	if m.terminalWidth <= 0 || m.terminalHeight <= 0 {
 		return "Loading…"
@@ -23,30 +23,17 @@ func (m *Model) renderPageForView() string {
 	m.computeLayout()
 
 	// The settings view is a modal: it replaces the header/body/footer chrome
-	// with a centered box over a dimmed background.
+	// with a centered box over a dimmed background. Both this and the list view
+	// layer the transient status/error toast over the bottom of the frame.
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		return m.renderSettingsModal()
+		return m.overlayToast(m.renderSettingsModal())
 	}
 
 	header := renderHeader(m)
 	body := m.renderBody()
 	footer := m.renderBuildFooter()
 
-	var statusLine string
-	if m.err != nil {
-		statusLine = m.Style.Error.Render(truncate(" ! "+m.err.Error(), m.terminalWidth))
-	} else if m.status != "" {
-		statusLine = m.Style.Status.Render(truncate(" "+m.status, m.terminalWidth))
-	}
-
-	parts := make([]string, 0, 4)
-	parts = append(parts, header)
-	if statusLine != "" {
-		parts = append(parts, statusLine)
-	}
-	parts = append(parts, body, footer)
-
-	return strings.Join(parts, "\n")
+	return m.overlayToast(strings.Join([]string{header, body, footer}, "\n"))
 }
 
 // renderBody lays out the builds pane and, when shown, the detail pane either
@@ -64,8 +51,8 @@ func (m *Model) renderBody() string {
 }
 
 // renderSettingsModal renders the settings (or initial setup) view as a centered
-// box over a dimmed background, Surge-style. The key hints and any status/error
-// line live inside the box because the overlay replaces the usual chrome.
+// box over a dimmed background, Surge-style. The key hints live inside the box;
+// status/error messages are shown as a toast over the bottom of the frame.
 func (m *Model) renderSettingsModal() string {
 	p := m.Style.Palette
 	title := " Settings "
@@ -88,26 +75,14 @@ func (m *Model) renderSettingsModal() string {
 
 	content := m.Settings.View()
 
-	// Status / error line, since the overlay hides the usual status bar.
-	var messageLine string
-	if m.err != nil {
-		messageLine = lp.NewStyle().Foreground(lp.Color(p.Error)).Bold(true).
-			Render(truncate("✖ "+m.err.Error(), innerW))
-	} else if m.status != "" {
-		messageLine = lp.NewStyle().Foreground(lp.Color(p.Success)).
-			Render(truncate("✓ "+m.status, innerW))
-	}
-
 	help := m.renderHints(m.settingsHints())
 	help = lp.NewStyle().Width(innerW).Align(lp.Center).Render(truncate(help, innerW))
 
 	// Build the box content and size the modal to it, so it stays snug rather
-	// than leaving a large empty gap above the help line.
+	// than leaving a large empty gap above the help line. The status/error toast
+	// is layered over the bottom of the frame, not inside the box.
 	lines := make([]string, 0, 16)
 	lines = append(lines, "")
-	if messageLine != "" {
-		lines = append(lines, messageLine, "")
-	}
 	lines = append(lines, strings.Split(content, "\n")...)
 	lines = append(lines, "", help)
 
