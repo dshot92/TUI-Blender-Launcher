@@ -128,20 +128,32 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 
 // findBlenderExecutable locates the Blender executable in the installation directory.
 func findBlenderExecutable(installDir string) string {
-	var candidate string
-	switch runtime.GOOS {
-	case "windows":
-		candidate = filepath.Join(installDir, "blender-launcher.exe")
-	case "linux":
-		candidate = filepath.Join(installDir, "blender")
-	default:
-		candidate = filepath.Join(installDir, "blender")
-	}
-
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
+	for _, candidate := range blenderExecutableCandidates(runtime.GOOS, installDir) {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
 	}
 	return ""
+}
+
+// blenderExecutableCandidates returns the possible locations of the Blender
+// executable inside an extracted build directory, in priority order. On macOS a
+// build is distributed as a .app bundle whose runnable binary lives under
+// Contents/MacOS; the nested "Blender/Blender.app" layout is kept as a fallback
+// for older, non-DMG archives.
+func blenderExecutableCandidates(goos, installDir string) []string {
+	switch goos {
+	case "windows":
+		return []string{filepath.Join(installDir, "blender-launcher.exe")}
+	case "darwin":
+		return []string{
+			filepath.Join(installDir, "Blender.app", "Contents", "MacOS", "Blender"),
+			filepath.Join(installDir, "Blender", "Blender.app", "Contents", "MacOS", "Blender"),
+			filepath.Join(installDir, "blender"),
+		}
+	default:
+		return []string{filepath.Join(installDir, "blender")}
+	}
 }
 
 // OpenFileExplorer opens the default file explorer to the specified directory.

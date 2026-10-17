@@ -3,6 +3,7 @@ package local
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dshot92/TUI-Blender-Launcher/download"
@@ -105,5 +106,68 @@ func TestDeleteBuildNotFound(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected ok=false for a missing build")
+	}
+}
+
+func TestBlenderExecutableCandidates(t *testing.T) {
+	cases := []struct {
+		goos string
+		want []string
+	}{
+		{"windows", []string{filepath.Join("/lib", "blender-launcher.exe")}},
+		{"linux", []string{filepath.Join("/lib", "blender")}},
+		{"darwin", []string{
+			filepath.Join("/lib", "Blender.app", "Contents", "MacOS", "Blender"),
+			filepath.Join("/lib", "Blender", "Blender.app", "Contents", "MacOS", "Blender"),
+			filepath.Join("/lib", "blender"),
+		}},
+	}
+	for _, tc := range cases {
+		got := blenderExecutableCandidates(tc.goos, "/lib")
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: got %v, want %v", tc.goos, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s candidate[%d] = %q, want %q", tc.goos, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestFindBlenderExecutable verifies discovery for the current platform's layout.
+func TestFindBlenderExecutable(t *testing.T) {
+	root := t.TempDir()
+	candidates := blenderExecutableCandidates(runtime.GOOS, root)
+	want := candidates[0]
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+
+	if got := findBlenderExecutable(root); got != want {
+		t.Errorf("findBlenderExecutable = %q, want %q", got, want)
+	}
+}
+
+// TestFindBlenderExecutableMacOSFallback covers the nested, non-DMG archive
+// layout, which only exists on macOS.
+func TestFindBlenderExecutableMacOSFallback(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-only layout")
+	}
+	root := t.TempDir()
+	nested := filepath.Join(root, "Blender", "Blender.app", "Contents", "MacOS", "Blender")
+	if err := os.MkdirAll(filepath.Dir(nested), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(nested, []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+
+	if got := findBlenderExecutable(root); got != nested {
+		t.Errorf("findBlenderExecutable = %q, want %q", got, nested)
 	}
 }

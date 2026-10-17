@@ -931,6 +931,12 @@ func DownloadAndExtractBuild(
 
 		// Extract the zip archive
 		extractErr = extractZip(downloadPath, downloadBaseDir, extractCb, cancelCh)
+	} else if strings.HasSuffix(strings.ToLower(downloadFileName), dmgExtension) {
+		// macOS builds ship as a disk image; extractDMG mounts it, copies the
+		// .app bundle(s) out into its own root directory, and detaches it.
+		rootDir, err := extractDMG(downloadPath, downloadBaseDir, extractCb, cancelCh)
+		extractedRootDir = rootDir
+		extractErr = err
 	} else {
 		return "", fmt.Errorf("unsupported archive format: %s", downloadFileName)
 	}
