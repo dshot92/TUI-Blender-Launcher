@@ -273,6 +273,39 @@ func TestSystemXzReaderMatchesPureGo(t *testing.T) {
 	}
 }
 
+func TestSystemXzReaderCleanupKillsRunningChild(t *testing.T) {
+	if findSystemXz() == "" {
+		t.Skip("system xz not available")
+	}
+
+	// A src that never supplies data keeps the child alive (blocked reading
+	// stdin). cleanup must kill it and report success: tearing down a running
+	// decoder is not a decode failure.
+	pr, pw := io.Pipe()
+	stream, err := newSystemXzReader(pr, make(chan struct{}))
+	if err != nil {
+		t.Fatalf("newSystemXzReader: %v", err)
+	}
+
+	cleanupDone := make(chan error, 1)
+	go func() { cleanupDone <- stream.cleanup() }()
+
+	// Wait for cleanup to interrupt the live child, then unblock the stdin
+	// feeder so cleanup can join it (io.Pipe.Reader has no Close).
+	deadline := time.Now().Add(5 * time.Second)
+	for !stream.killed.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("cleanup did not kill the running child")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	pw.Close()
+
+	if err := <-cleanupDone; err != nil {
+		t.Fatalf("cleanup of a running child: %v", err)
+	}
+}
+
 func mustXzReader(t *testing.T, r io.Reader) io.Reader {
 	t.Helper()
 	xzr, err := xz.NewReader(r)
