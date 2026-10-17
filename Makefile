@@ -1,10 +1,16 @@
 BIN := $(HOME)/.local/bin/tui-blender-launcher
 BUILD_BIN := tui-blender-launcher
 
-.PHONY: build install run uninstall test lint vet fmt release-check
+# Derive the version from git so local builds report something meaningful
+# (e.g. v1.0.0, v1.0.0-5-gabc1234, or a short SHA). Override with
+# `make build VERSION=1.2.3`. Falls back to "dev" outside a git checkout.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION)
+
+.PHONY: build install run uninstall test lint vet fmt release-check snapshot
 
 build:
-	go build -o $(BUILD_BIN) .
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_BIN) .
 
 install: build
 	mkdir -p $(dir $(BIN))
@@ -19,6 +25,9 @@ uninstall:
 
 release-check:
 	goreleaser check
+
+snapshot:
+	goreleaser release --snapshot --clean
 
 fmt:
 	gofmt -w .

@@ -216,7 +216,14 @@ make release-check # validate GoReleaser config
 Build a release-style binary locally:
 
 ```bash
-go build -trimpath -ldflags="-s -w -X main.version=dev" -o tui-blender-launcher .
+make build   # injects a git-derived version (e.g. v1.0.0-5-gabc1234)
+```
+
+Pushing a version tag creates a GitHub release and uploads all binaries:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 ## License
