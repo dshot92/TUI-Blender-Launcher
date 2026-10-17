@@ -1,15 +1,12 @@
 package api
 
 import (
-	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/config"
 	"encoding/json"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"net/http"
 	"runtime"
 	"strings"
-
-	version "github.com/hashicorp/go-version" // Import version library
 )
 
 // API endpoint URLs for different build types
@@ -19,38 +16,48 @@ const (
 	experimentalBlenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
 )
 
+// buildTypeURLs maps each supported build type to its API endpoint. It is keyed
+// by model.BuildType so the set of build types has a single source of truth.
+var buildTypeURLs = map[model.BuildType]string{
+	model.BuildTypeDaily:        dailyBlenderAPIURL,
+	model.BuildTypePatch:        patchBlenderAPIURL,
+	model.BuildTypeExperimental: experimentalBlenderAPIURL,
+}
+
 // API represents the Blender API client
 type API struct {
 	client *http.Client
 }
 
-// NewAPI creates a new API client
+// NewAPI creates a new API client. The HTTP client is resolved at request
+// time (falling back to http.DefaultClient), so tests can inject a mock
+// RoundTripper via http.DefaultClient even after NewAPI is called.
 func NewAPI() *API {
-	return &API{
-		client: &http.Client{},
-	}
+	return &API{}
+}
+
+// NewAPIWithClient creates a new API client using the provided HTTP client.
+// Useful for testing or for callers that need custom transport settings.
+func NewAPIWithClient(client *http.Client) *API {
+	return &API{client: client}
+}
+
+// FetchOptions selects which builds FetchBuilds returns.
+type FetchOptions struct {
+	VersionFilter string
+	BuildType     string
+	ReleaseTypes  []string // release_cycle values to keep; empty = all
+	UUID          string   // client identifier sent as X-Client-UUID
 }
 
 // FetchBuilds fetches the list of Blender builds from the official API,
-// filtering for the current OS/architecture, file extensions, and minimum version.
-func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, error) {
-	// Get config
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// Determine which API URL to use based on buildType
-	var apiURL string
-	switch buildType {
-	case "daily":
-		apiURL = dailyBlenderAPIURL
-	case "patch":
-		apiURL = patchBlenderAPIURL
-	case "experimental":
-		apiURL = experimentalBlenderAPIURL
-	default:
-		// Default to daily builds if not specified or invalid
+// filtering for the current OS/architecture, file extensions, release cycle,
+// and minimum version.
+func (a *API) FetchBuilds(opts FetchOptions) ([]model.BlenderBuild, error) {
+	// Determine which API URL to use based on the build type, defaulting to
+	// daily builds if the value is unknown.
+	apiURL, ok := buildTypeURLs[model.ParseBuildType(opts.BuildType)]
+	if !ok {
 		apiURL = dailyBlenderAPIURL
 	}
 
@@ -59,9 +66,16 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("X-Client-UUID", cfg.UUID)
+	req.Header.Set("X-Client-UUID", opts.UUID)
 
-	resp, err := a.client.Do(req)
+	// Resolve the HTTP client lazily so tests can override http.DefaultClient
+	// after NewAPI() has been called.
+	client := a.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch data: %w", err)
 	}
@@ -79,95 +93,48 @@ func (a *API) FetchBuilds(versionFilter string, buildType string) ([]model.Blend
 	// --- Filtering Setup ---
 	currentOS := runtime.GOOS
 	currentArch := runtime.GOARCH
-	// Initialize apiArch explicitly within the switch block below
-	var apiArch string
+	allowed := allowedArch(currentOS, currentArch)
 
-	// Map architecture names from Go runtime format (GOARCH) to Blender API format.
-	// GOOS values (linux, windows, darwin) match the API 'platform' field directly.
-	switch currentOS {
-	case "linux":
-		switch currentArch {
-		case "amd64":
-			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
-		case "arm64":
-			// Assuming API uses "arm64" for Linux ARM (like other OS).
-			// Verified data did not contain Linux ARM builds from this endpoint.
-			// Adjust if other endpoints use "aarch64" or similar for Linux ARM.
-			apiArch = "arm64"
-		default:
-			// For unknown/unsupported arch, use Go's name; will likely be filtered out later.
-			apiArch = currentArch
-		}
-	case "darwin": // macOS
-		switch currentArch {
-		case "amd64":
-			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
-		case "arm64":
-			apiArch = "arm64" // Go's arm64 matches API's arm64
-		default:
-			apiArch = currentArch
-		}
-	case "windows":
-		switch currentArch {
-		case "amd64":
-			apiArch = "amd64" // Go's amd64 matches API's amd64
-		case "arm64":
-			apiArch = "arm64" // Go's arm64 matches API's arm64
-		default:
-			apiArch = currentArch
-		}
-	default:
-		// For unknown OS, use Go's arch name; OS filter check later will handle it.
-		apiArch = currentArch
+	// Parse the version filter once. An invalid filter is a user error, so it is
+	// surfaced to the caller (which shows it in the TUI).
+	vf, err := model.ParseVersionFilter(opts.VersionFilter)
+	if err != nil {
+		return nil, fmt.Errorf("invalid version filter format '%s': %w", opts.VersionFilter, err)
 	}
 
-	allowedExtensions := map[string]bool{
-		"zip": true, "tar.gz": true, "tar.xz": true, "tar.bz2": true,
-		"xz": true, "dmg": true, "pkg": true,
-	}
+	releaseFilter := model.ParseReleaseTypes(opts.ReleaseTypes)
 
-	// Parse the version filter if provided
-	var minVersion *version.Version
-	if versionFilter != "" {
-		minVersion, err = version.NewVersion(versionFilter)
-		if err != nil {
-			// Handle invalid filter format - maybe log and ignore?
-			// For now, return error to notify user via TUI
-			return nil, fmt.Errorf("invalid version filter format '%s': %w", versionFilter, err)
+	// Collect the API's checksum sidecars so kept archives can be verified after
+	// download. Sidecars are "<archiveURL>.sha256".
+	checksums := make(map[string]string)
+	for _, entry := range allBuildEntries {
+		archiveURL := strings.TrimSuffix(entry.DownloadURL, ".sha256")
+		if archiveURL != entry.DownloadURL {
+			checksums[archiveURL] = entry.DownloadURL
 		}
 	}
 
 	// --- Filtering Loop ---
 	var platformFilteredBuilds []model.BlenderBuild
 	for _, build := range allBuildEntries {
-		// Check OS
-		if build.OperatingSystem != currentOS {
+		if !matchesPlatform(build, currentOS, allowed) {
 			continue
 		}
-		// Check Arch: Use the explicitly mapped apiArch
-		if build.Architecture != apiArch {
+		if !hasAllowedExtension(build.FileExtension) {
 			continue
 		}
-		// Check Extension
-		ext := strings.ToLower(build.FileExtension)
-		if _, ok := allowedExtensions[ext]; !ok {
+		if !releaseFilter.Matches(build) {
 			continue
 		}
-
-		// Check Version Filter
-		if minVersion != nil {
-			buildVersion, err := version.NewVersion(build.Version)
-			if err != nil {
-				// Skip builds with unparseable versions if filter is active
-				continue
-			}
-			if buildVersion.LessThan(minVersion) {
-				continue // Skip if build version is less than filter
-			}
+		if !vf.Matches(build, false) {
+			continue
 		}
 
 		// Passed all filters
 		build.Status = model.StateOnline
+		if url, ok := checksums[build.DownloadURL]; ok {
+			build.ChecksumURL = url
+		}
 		platformFilteredBuilds = append(platformFilteredBuilds, build)
 	}
 

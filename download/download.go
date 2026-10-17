@@ -1,14 +1,15 @@
 package download
 
 import (
-	"TUI-Blender-Launcher/config"
-	"TUI-Blender-Launcher/model"
 	"archive/tar"
 	"archive/zip"
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"io"
 	"net/http"
 	"os"
@@ -24,33 +25,67 @@ import (
 const DownloadingDir = ".downloading"
 const OldBuildsDir = ".oldbuilds"
 
-// Error constants
-var ErrCancelled = errors.New("operation cancelled")
-var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
+// Sentinel errors returned by the download pipeline.
+var (
+	// ErrCancelled reports that the user cancelled the operation.
+	ErrCancelled = errors.New("operation cancelled")
+	// ErrDownloadTimeout reports that a single download exceeded downloadTimeout.
+	// It is a total-transfer cap, not an idle timeout.
+	ErrDownloadTimeout = errors.New("download exceeded the time limit")
+)
 
 // versionMetaFilename is the name of the metadata file saved in the extracted directory.
 const versionMetaFilename = "version.json"
 
-// ProgressCallback is a function type for reporting download progress.
-// It receives bytes downloaded and total file size.
-type ProgressCallback func(downloadedBytes, totalBytes int64)
+// extractBufferSize is the copy buffer used while extracting archive entries.
+const extractBufferSize = 4 * 1024 * 1024
+
+// extractMaxWorkers bounds the number of concurrent extraction workers.
+const extractMaxWorkers = 4
+
+// progressTickInterval is how often the download progress callback fires.
+const progressTickInterval = 200 * time.Millisecond
+
+// maxChecksumBytes caps how much of a .sha256 sidecar is read.
+const maxChecksumBytes = 4096
+
+// archiveTimestampLayout names builds moved into the .oldbuilds directory.
+const archiveTimestampLayout = "20060102_150405"
+
+// Filesystem permissions used while downloading and extracting: directories we
+// own are private, the download directory keeps its conventional mode, and the
+// metadata file is world-readable.
+const (
+	privateDirPerm   os.FileMode = 0o750
+	publicDirPerm    os.FileMode = 0o755
+	metadataFilePerm os.FileMode = 0o644
+)
+
+// ProgressCallback reports download progress: bytes downloaded, total size,
+// and the current transfer speed in bytes/sec.
+type ProgressCallback func(downloadedBytes, totalBytes int64, speedBytesPerSec float64)
 
 // ExtractionProgressCallback represents a callback used to report extraction progress.
 // Since we can't know the total size up front, we use a percentage (0.0-1.0) estimate.
 type ExtractionProgressCallback func(estimatedProgress float64)
 
-// downloadFile downloads a file, reporting progress via the callback.
-func downloadFile(url string, destFilePath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
+// downloadTimeout caps a single download. Kept generous because Blender
+// builds are large; connection liveness is bounded by the transport timeouts.
+const downloadTimeout = 30 * time.Minute
+
+// downloadFile downloads a file, reporting progress via the callback. clientID
+// is sent as the X-Download-ID header so the server can attribute the request.
+func downloadFile(url string, destFilePath string, clientID string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
 	// Create download directory if it doesn't exist
 	downloadDir := filepath.Dir(destFilePath)
-	if err := os.MkdirAll(downloadDir, 0755); err != nil {
+	if err := os.MkdirAll(downloadDir, publicDirPerm); err != nil {
 		return fmt.Errorf("failed to create download directory: %w", err)
 	}
 
-	// Create download client with configurable timeout
+	// No global client timeout: large builds legitimately take a long time.
+	// Connection liveness is bounded by the transport timeouts below.
 	client := grab.NewClient()
 	client.HTTPClient = &http.Client{
-		Timeout: 30 * time.Second, // Set reasonable timeout to prevent hanging connections
 		Transport: &http.Transport{
 			IdleConnTimeout:       90 * time.Second,
 			DisableCompression:    false,
@@ -67,34 +102,42 @@ func downloadFile(url string, destFilePath string, progressCb ProgressCallback, 
 	}
 
 	// Set headers
-	req.HTTPRequest.Header.Set("X-Download-ID", config.GetConfigInstance().UUID)
+	req.HTTPRequest.Header.Set("X-Download-ID", clientID)
 	req.HTTPRequest.Header.Set("User-Agent", "TUI-Blender-Launcher")
 
 	// Start download
 	resp := client.Do(req)
 
-	// Create a channel to signal completion
-	done := make(chan error, 1)
-	go func() {
-		<-resp.Done
-		if err := resp.Err(); err != nil {
-			done <- fmt.Errorf("download failed: %w", err)
-			return
-		}
-		done <- nil
-	}()
+	ticker := time.NewTicker(progressTickInterval)
+	defer ticker.Stop()
 
-	// Wait for completion, cancellation, or timeout
-	select {
-	case err := <-done:
-		if err != nil {
-			return err
+	timeout := time.NewTimer(downloadTimeout)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if progressCb != nil {
+				progressCb(resp.BytesComplete(), resp.Size(), resp.BytesPerSecond())
+			}
+
+		case <-resp.Done:
+			if err := resp.Err(); err != nil {
+				return fmt.Errorf("download failed: %w", err)
+			}
+			if progressCb != nil {
+				progressCb(resp.Size(), resp.Size(), 0)
+			}
+			return nil
+
+		case <-cancelCh:
+			_ = resp.Cancel()
+			return ErrCancelled
+
+		case <-timeout.C:
+			_ = resp.Cancel()
+			return fmt.Errorf("download timed out after %s: %w", downloadTimeout, ErrDownloadTimeout)
 		}
-		return nil
-	case <-cancelCh:
-		return ErrCancelled
-	case <-time.After(30 * time.Minute): // Increased timeout for large files
-		return fmt.Errorf("download timed out after 30 minutes: %w", ErrIdleTimeout)
 	}
 }
 
@@ -113,6 +156,96 @@ func (r *CancelableReader) Read(p []byte) (n int, err error) {
 	}
 }
 
+// checksumHTTPTimeout bounds fetching a small .sha256 sidecar.
+const checksumHTTPTimeout = 30 * time.Second
+
+// fetchExpectedChecksum downloads a .sha256 sidecar and returns the hex digest
+// it contains (the first whitespace-delimited field). It returns ErrCancelled if
+// cancellation is requested while the request is in flight.
+func fetchExpectedChecksum(checksumURL string, cancelCh <-chan struct{}) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "TUI-Blender-Launcher")
+
+	client := &http.Client{Timeout: checksumHTTPTimeout}
+
+	// Run the request in the background so a cancel can return promptly.
+	done := make(chan struct{})
+	var resp *http.Response
+	var doErr error
+	go func() {
+		resp, doErr = client.Do(req)
+		close(done)
+	}()
+
+	select {
+	case <-cancelCh:
+		return "", ErrCancelled
+	case <-done:
+	}
+
+	if doErr != nil {
+		return "", doErr
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	// A checksum file is tiny; cap the read defensively.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxChecksumBytes))
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	return fields[0], nil
+}
+
+// fileSHA256 returns the hex SHA-256 digest of a file, honoring cancellation.
+func fileSHA256(path string, cancelCh <-chan struct{}) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, &CancelableReader{Reader: f, CancelCh: cancelCh}); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifyChecksum fetches the expected SHA-256 for archivePath from checksumURL
+// and compares it to the archive's actual digest. It returns (false, nil) when
+// the sidecar cannot be fetched, so a good download is not failed merely because
+// no checksum is available; an error is returned on mismatch, a hashing failure,
+// or cancellation.
+func verifyChecksum(archivePath, checksumURL string, cancelCh <-chan struct{}) (bool, error) {
+	expected, err := fetchExpectedChecksum(checksumURL, cancelCh)
+	if err != nil {
+		if errors.Is(err, ErrCancelled) {
+			return false, err
+		}
+		// Unavailable checksum: skip verification rather than fail the download.
+		return false, nil
+	}
+
+	actual, err := fileSHA256(archivePath, cancelCh)
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(expected, actual) {
+		return false, fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return true, nil
+}
+
 // extractTarXz extracts a .tar.xz archive with progress updates.
 func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCallback, cancelCh <-chan struct{}) error {
 	// Get file info to calculate rough progress based on archive size
@@ -128,9 +261,27 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	}
 	defer file.Close()
 
-	// Increase buffer size for better performance
-	const bufferSize = 4 * 1024 * 1024 // 4MB buffer for better throughput
-	bufferedFile := bufio.NewReaderSize(file, bufferSize)
+	// A large buffer improves throughput on these multi-hundred-MB archives.
+	bufferedFile := bufio.NewReaderSize(file, extractBufferSize)
+
+	// progressCb may be invoked from the xz feeder goroutine (via the
+	// progress tracker) and from this goroutine. Serialize the calls and
+	// guarantee the 0.0 sample is emitted before any intermediate value.
+	var progressMu sync.Mutex
+	report := func(p float64) {
+		if progressCb == nil {
+			return
+		}
+		if p < 0 {
+			p = 0
+		} else if p > 1 {
+			p = 1
+		}
+		progressMu.Lock()
+		progressCb(p)
+		progressMu.Unlock()
+	}
+	report(0.0)
 
 	// Create a reader that will track read progress
 	progressBuffer := &progressTracker{
@@ -138,11 +289,9 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		total:    archiveSize,
 		cancelCh: cancelCh,
 		callback: func(read, total int64) {
-			if progressCb != nil {
-				// Convert to estimated extraction progress (0.0-1.0)
-				estimatedProgress := float64(read) / float64(total)
-				progressCb(estimatedProgress)
-			}
+			// Convert to estimated extraction progress (0.0-1.0)
+			estimatedProgress := float64(read) / float64(total)
+			report(estimatedProgress)
 		},
 	}
 
@@ -168,17 +317,12 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		tarInput = xzReader
 	}
 
-	bufferedXzReader := bufio.NewReaderSize(tarInput, bufferSize)
+	bufferedXzReader := bufio.NewReaderSize(tarInput, extractBufferSize)
 	tarReader := tar.NewReader(bufferedXzReader)
 
-	copyBuffer := make([]byte, bufferSize)
+	copyBuffer := make([]byte, extractBufferSize)
 
-	if progressCb != nil {
-		progressCb(0.0)
-	}
-
-	const maxWorkers = 4
-	sem := make(chan struct{}, maxWorkers)
+	sem := make(chan struct{}, extractMaxWorkers)
 	var wg sync.WaitGroup
 	var firstErr error
 	var errLock sync.Mutex
@@ -226,8 +370,14 @@ extractLoop:
 		}
 		entryCount++
 
-		// Use header.Name as is without modifying the path
-		targetPath := filepath.Join(destDir, header.Name)
+		// Resolve the entry against destDir, rejecting any path that would
+		// escape it (e.g. "../.." traversal). Entry names use forward slashes
+		// regardless of platform, so they are normalized first.
+		targetPath, err := safeJoin(destDir, header.Name)
+		if err != nil {
+			setFirstError(fmt.Errorf("illegal path in archive: %w", err))
+			break extractLoop
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -237,7 +387,7 @@ extractLoop:
 			}
 		case tar.TypeReg:
 			if header.Size > 0 {
-				if header.Size <= int64(bufferSize) {
+				if header.Size <= int64(extractBufferSize) {
 					fileContents := make([]byte, header.Size)
 					if _, err := io.ReadFull(tarReader, fileContents); err != nil {
 						if errors.Is(err, ErrCancelled) {
@@ -259,7 +409,7 @@ extractLoop:
 							return
 						}
 
-						if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+						if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 							setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 							return
 						}
@@ -270,7 +420,7 @@ extractLoop:
 						}
 					}(targetPath, header.Mode, fileContents)
 				} else {
-					if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+					if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 						setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 						break extractLoop
 					}
@@ -284,7 +434,7 @@ extractLoop:
 					// Wrap tarReader with cancellation check
 					cancelReader := &CancelableReader{Reader: tarReader, CancelCh: cancelCh}
 
-					bufferedWriter := bufio.NewWriterSize(outFile, bufferSize)
+					bufferedWriter := bufio.NewWriterSize(outFile, extractBufferSize)
 					if _, err := io.CopyBuffer(bufferedWriter, cancelReader, copyBuffer); err != nil {
 						outFile.Close()
 						if errors.Is(err, ErrCancelled) {
@@ -307,7 +457,7 @@ extractLoop:
 					}
 				}
 			} else {
-				if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+				if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 					setFirstError(fmt.Errorf("failed to create parent dir for empty file %s: %w", targetPath, err))
 					break extractLoop
 				}
@@ -318,7 +468,7 @@ extractLoop:
 				}
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+			if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 				setFirstError(fmt.Errorf("failed to create parent dir for symlink %s: %w", targetPath, err))
 				break extractLoop
 			}
@@ -339,9 +489,7 @@ extractLoop:
 	// setFirstError directly (no channel: an error burst must not block).
 	wg.Wait()
 
-	if progressCb != nil {
-		progressCb(1.0)
-	}
+	report(1.0)
 
 	return firstErr
 }
@@ -383,7 +531,7 @@ func saveVersionMetadata(build model.BlenderBuild, extractedDir string) error {
 		return fmt.Errorf("failed to marshal build metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metaPath, jsonData, 0644); err != nil {
+	if err := os.WriteFile(metaPath, jsonData, metadataFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", versionMetaFilename, err)
 	}
 	return nil
@@ -404,18 +552,30 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 	}
 
 	// Create a buffer for copying file contents
-	const bufferSize = 4 * 1024 * 1024 // 4MB buffer
-	copyBuffer := make([]byte, bufferSize)
+	copyBuffer := make([]byte, extractBufferSize)
 
-	if progressCb != nil {
-		progressCb(0.0)
+	// progressCb is invoked from multiple extraction workers, so serialize
+	// the calls to keep the callback contract well-defined.
+	var progressMu sync.Mutex
+	report := func(p float64) {
+		if progressCb == nil {
+			return
+		}
+		if p < 0 {
+			p = 0
+		} else if p > 1 {
+			p = 1
+		}
+		progressMu.Lock()
+		progressCb(p)
+		progressMu.Unlock()
 	}
+	report(0.0)
 
 	var processedSize uint64
 	var processedSizeLock sync.Mutex
 
-	const maxWorkers = 4
-	sem := make(chan struct{}, maxWorkers)
+	sem := make(chan struct{}, extractMaxWorkers)
 	var wg sync.WaitGroup
 	var firstErr error
 	var errLock sync.Mutex
@@ -446,15 +606,18 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			break
 		}
 
-		// Get proper file path ensuring no path traversal
-		targetPath := filepath.Join(destDir, file.Name)
-
-		// Make sure we follow zip entry slashes on Windows
-		targetPath = filepath.FromSlash(targetPath)
+		// Resolve the entry against destDir, rejecting any path that would
+		// escape it. filepath.FromSlash runs inside safeJoin so zip entries
+		// (which always use "/") map correctly on Windows.
+		targetPath, err := safeJoin(destDir, file.Name)
+		if err != nil {
+			setFirstError(fmt.Errorf("illegal path in archive: %w", err))
+			break
+		}
 
 		if file.FileInfo().IsDir() {
 			// Create directory
-			if err := os.MkdirAll(targetPath, 0750); err != nil {
+			if err := os.MkdirAll(targetPath, privateDirPerm); err != nil {
 				setFirstError(fmt.Errorf("failed to create directory %s: %w", targetPath, err))
 				break
 			}
@@ -462,13 +625,13 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 		}
 
 		// Make sure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), privateDirPerm); err != nil {
 			setFirstError(fmt.Errorf("failed to create parent directory for %s: %w", targetPath, err))
 			break
 		}
 
 		// Small files can be read entirely into memory
-		if file.UncompressedSize64 <= uint64(bufferSize) {
+		if file.UncompressedSize64 <= uint64(extractBufferSize) {
 			wg.Add(1)
 			go func(file *zip.File, targetPath string) {
 				defer wg.Done()
@@ -505,7 +668,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 				processedSizeLock.Unlock()
 
 				if progressCb != nil && totalSize > 0 {
-					progressCb(float64(currentSize) / float64(totalSize))
+					report(float64(currentSize) / float64(totalSize))
 				}
 			}(file, targetPath)
 		} else {
@@ -546,7 +709,7 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			processedSizeLock.Unlock()
 
 			if progressCb != nil && totalSize > 0 {
-				progressCb(float64(currentSize) / float64(totalSize))
+				report(float64(currentSize) / float64(totalSize))
 			}
 		}
 
@@ -555,18 +718,32 @@ func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallba
 			processedSizeLock.Lock()
 			currentSize := processedSize
 			processedSizeLock.Unlock()
-			progressCb(float64(currentSize) / float64(totalSize))
+			report(float64(currentSize) / float64(totalSize))
 		}
 	}
 
 cleanup:
 	wg.Wait()
 
-	if progressCb != nil {
-		progressCb(1.0)
-	}
+	report(1.0)
 
 	return firstErr
+}
+
+// safeJoin resolves an archive entry name against destDir, returning an error
+// when the result would escape destDir (e.g. an entry such as "../../etc/passwd").
+// Archive entry names always use forward slashes, so they are normalized before
+// joining; this also makes zip entries extract correctly on Windows.
+func safeJoin(destDir, name string) (string, error) {
+	target := filepath.Join(destDir, filepath.FromSlash(name))
+	rel, err := filepath.Rel(destDir, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("illegal path %q in archive", name)
+	}
+	return target, nil
 }
 
 // findRootDirInZip peeks into the ZIP archive to find the root directory name
@@ -625,23 +802,62 @@ func findRootDirInTarXz(archivePath string) (string, error) {
 	return "", fmt.Errorf("no root directory found in archive")
 }
 
-// DownloadAndExtractBuild downloads and extracts a build, handling cancellation.
-func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) (string, error) {
+// ArchiveBuildDir moves a build directory into the timestamped .oldbuilds
+// directory under downloadBaseDir. Shared by build replacement and deletion.
+func ArchiveBuildDir(downloadBaseDir, buildDir string) error {
+	oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
+	if err := os.MkdirAll(oldBuildsDir, privateDirPerm); err != nil {
+		return fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
+	}
+	timestamp := time.Now().Format(archiveTimestampLayout)
+	oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(buildDir), timestamp)
+	return os.Rename(buildDir, filepath.Join(oldBuildsDir, oldBuildName))
+}
+
+// ReadVersionMetadata reads the build metadata written by saveVersionMetadata
+// from dirPath. It returns (nil, nil) when the directory has no metadata file,
+// and an error only when the file exists but cannot be read or parsed.
+func ReadVersionMetadata(dirPath string) (*model.BlenderBuild, error) {
+	metaPath := filepath.Join(dirPath, versionMetaFilename)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", metaPath, err)
+	}
+	var build model.BlenderBuild
+	if err := json.Unmarshal(data, &build); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", metaPath, err)
+	}
+	return &build, nil
+}
+
+// DownloadAndExtractBuild downloads (reporting via downloadCb) and extracts
+// (reporting via extractCb) a build, handling cancellation throughout. clientID
+// is forwarded as the download request's client identifier.
+func DownloadAndExtractBuild(
+	build model.BlenderBuild,
+	downloadBaseDir string,
+	clientID string,
+	downloadCb ProgressCallback,
+	extractCb ExtractionProgressCallback,
+	cancelCh <-chan struct{},
+) (string, error) {
 	// 1. Download
 	downloadFileName := filepath.Base(build.DownloadURL)
 	downloadTempDir := filepath.Join(downloadBaseDir, DownloadingDir)
-	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
+	if err := os.MkdirAll(downloadTempDir, privateDirPerm); err != nil {
 		return "", fmt.Errorf("failed to create download temp dir: %w", err)
 	}
 	downloadPath := filepath.Join(downloadTempDir, downloadFileName)
 
 	// Defer cleanup of the downloaded archive file
 	defer func() {
-		if err := os.Remove(downloadPath); err != nil && !os.IsNotExist(err) {
-		}
+		_ = os.Remove(downloadPath)
 	}()
 
-	if err := downloadFile(build.DownloadURL, downloadPath, progressCb, cancelCh); err != nil {
+	if err := downloadFile(build.DownloadURL, downloadPath, clientID, downloadCb, cancelCh); err != nil {
 		if errors.Is(err, ErrCancelled) {
 			return "", ErrCancelled // Propagate cancellation error
 		}
@@ -656,31 +872,38 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		// Continue
 	}
 
-	// 2. The archive contains a root directory, we'll extract directly to downloadBaseDir
-	// Look for any existing directory with this build version
-	var existingBuildDir string
-	entries, err := os.ReadDir(downloadBaseDir)
-	if err == nil {
-		// Find any directories that might contain this version
-		version := build.Version
-		for _, entry := range entries {
-			if entry.IsDir() && entry.Name() != DownloadingDir && entry.Name() != OldBuildsDir {
-				// Check if this directory contains the version we're downloading
-				if strings.Contains(entry.Name(), version) {
-					existingBuildDir = filepath.Join(downloadBaseDir, entry.Name())
-					break
-				}
+	// 2. Verify the archive against the API checksum when one is available.
+	// A mismatch aborts the download; an unavailable checksum is skipped.
+	if build.ChecksumURL != "" {
+		if _, err := verifyChecksum(downloadPath, build.ChecksumURL, cancelCh); err != nil {
+			if errors.Is(err, ErrCancelled) {
+				return "", ErrCancelled
 			}
+			return "", fmt.Errorf("checksum verification failed: %w", err)
 		}
 	}
 
-	// 3. Extract based on archive type
-	extractionCb := func(progress float64) {
-		if progressCb != nil {
-			// Use a large virtual size to indicate extraction phase to the UI
-			const extractionVirtualSize int64 = 100 * 1024 * 1024
-			currentBytes := int64(progress * float64(extractionVirtualSize))
-			progressCb(currentBytes, extractionVirtualSize)
+	// 3. Extract. Archives contain a single root directory, so we extract
+	// directly into downloadBaseDir. First locate any existing extraction of the
+	// same build (matched by its version.json metadata, not by directory name)
+	// so it can be archived once the new copy is in place.
+	var existingBuildDir string
+	if entries, err := os.ReadDir(downloadBaseDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || entry.Name() == DownloadingDir || entry.Name() == OldBuildsDir {
+				continue
+			}
+			dirPath := filepath.Join(downloadBaseDir, entry.Name())
+			info, err := ReadVersionMetadata(dirPath)
+			if err != nil || info == nil {
+				continue
+			}
+			if info.Version == build.Version &&
+				info.Branch == build.Branch &&
+				info.ReleaseCycle == build.ReleaseCycle {
+				existingBuildDir = dirPath
+				break
+			}
 		}
 	}
 
@@ -697,7 +920,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
 
 		// Extract the archive
-		extractErr = extractTarXz(downloadPath, downloadBaseDir, extractionCb, cancelCh)
+		extractErr = extractTarXz(downloadPath, downloadBaseDir, extractCb, cancelCh)
 	} else if strings.HasSuffix(downloadFileName, ".zip") {
 		// Peek into the archive to find the root directory
 		rootDir, err := findRootDirInZip(downloadPath)
@@ -707,21 +930,21 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
 
 		// Extract the zip archive
-		extractErr = extractZip(downloadPath, downloadBaseDir, extractionCb, cancelCh)
+		extractErr = extractZip(downloadPath, downloadBaseDir, extractCb, cancelCh)
+	} else if strings.HasSuffix(strings.ToLower(downloadFileName), dmgExtension) {
+		// macOS builds ship as a disk image; extractDMG mounts it, copies the
+		// .app bundle(s) out into its own root directory, and detaches it.
+		rootDir, err := extractDMG(downloadPath, downloadBaseDir, extractCb, cancelCh)
+		extractedRootDir = rootDir
+		extractErr = err
 	} else {
 		return "", fmt.Errorf("unsupported archive format: %s", downloadFileName)
 	}
 
 	// Handle extraction error - only backup old build if extraction succeeded
 	if extractErr == nil && existingBuildDir != "" {
-		oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
-		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
-			return extractedRootDir, fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
-		}
-		timestamp := time.Now().Format("20060102_150405")
-		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
-		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
-		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
+		if err := ArchiveBuildDir(downloadBaseDir, existingBuildDir); err != nil {
+			// Fall back to removing the old build if archiving fails.
 			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
 				return extractedRootDir, fmt.Errorf("failed to replace old build dir: %w", err)
 			}
@@ -732,8 +955,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	if extractErr != nil {
 		// Attempt to clean up partially extracted directory
 		if extractedRootDir != "" {
-			if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
-			}
+			_ = os.RemoveAll(extractedRootDir)
 		}
 		if errors.Is(extractErr, ErrCancelled) {
 			return "", ErrCancelled // Propagate cancellation

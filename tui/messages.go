@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"time"
 )
 
@@ -27,9 +27,8 @@ type (
 		buildID string // Added unique build identifier
 	}
 	downloadCompleteMsg struct { // Download & extraction finished
-		buildVersion  string // Version of the build that finished
-		extractedPath string
-		err           error
+		buildVersion string // Version of the build that finished
+		err          error
 	}
 	buildDeletedMsg struct { // Build was deleted from disk
 		hash string
@@ -37,9 +36,14 @@ type (
 	// Error message
 	errMsg struct{ err error }
 
+	// Transient success/status message
+	statusMsg struct{ text string }
+
+	// clearStatusMsg clears the transient status line after it expires. The
+	// token matches the statusMsg it was scheduled for, so a newer status
+	// message is never cleared by an older timer.
+	clearStatusMsg struct{ token int64 }
+
 	// Timer message
 	tickMsg time.Time
-
-	// UI refresh message
-	forceRenderMsg struct{} // Message used just to force UI rendering
 )

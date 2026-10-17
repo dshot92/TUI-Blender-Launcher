@@ -2,11 +2,12 @@ package download
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os/exec"
 	"runtime"
+	"sync"
+	"sync/atomic"
 )
 
 // disableSystemXz forces the pure-Go xz fallback. Tests set it to exercise
@@ -31,12 +32,19 @@ func findSystemXz() string {
 }
 
 // systemXzStream is a `xz -dc` child decoding the archive on stdin.
-// The tar reader consumes s.rc; cleanup reaps the child.
+// The tar reader consumes s.rc; cleanup reaps the child and joins the
+// goroutine that feeds the child's stdin.
 type systemXzStream struct {
-	rc     io.ReadCloser
-	cancel context.CancelFunc
-	cmd    *exec.Cmd
-	stderr *bytes.Buffer
+	rc         io.ReadCloser
+	cmd        *exec.Cmd
+	stderr     *bytes.Buffer
+	feederDone chan struct{}
+	// done is closed by cleanup to stop the cancellation watcher.
+	done      chan struct{}
+	closeOnce sync.Once
+	// killed records that teardown interrupted a still-running child, so its
+	// exit status reflects our signal rather than a decode failure.
+	killed atomic.Bool
 }
 
 // newSystemXzReader starts `xz -dc` (liblzma) with src as its stdin and
@@ -52,53 +60,79 @@ func newSystemXzReader(src io.Reader, cancelCh <-chan struct{}) (*systemXzStream
 		return nil, fmt.Errorf("system xz not available")
 	}
 
-	ctx, stop := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, xzPath, "-dc")
+	cmd := exec.Command(xzPath, "-dc")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		stop()
 		return nil, fmt.Errorf("failed to create xz stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stop()
 		return nil, fmt.Errorf("failed to create xz stdout pipe: %w", err)
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
-		stop()
 		return nil, fmt.Errorf("failed to start xz: %w", err)
 	}
 
+	s := &systemXzStream{
+		rc:         stdout,
+		cmd:        cmd,
+		stderr:     &stderr,
+		feederDone: make(chan struct{}),
+		done:       make(chan struct{}),
+	}
+
 	// Feed the archive to the child. Exits on EOF, on child death (EPIPE),
-	// or when stdin is closed after the tar loop ends.
+	// or when stdin is closed after the tar loop ends. feederDone lets cleanup
+	// join this goroutine so no progress callback can outlive extraction.
 	go func() {
+		defer close(s.feederDone)
 		_, _ = io.Copy(stdin, src)
 		_ = stdin.Close()
 	}()
 
-	// Propagate user cancellation to the child (CommandContext kills it).
-	// Exits via ctx.Done on the normal path, so no goroutine leak.
+	// Propagate user cancellation by killing the child. Exits via s.done on
+	// the normal path, so no goroutine leak.
 	go func() {
 		select {
 		case <-cancelCh:
-			stop()
-		case <-ctx.Done():
+			s.kill()
+		case <-s.done:
 		}
 	}()
 
-	return &systemXzStream{rc: stdout, cancel: stop, cmd: cmd, stderr: &stderr}, nil
+	return s, nil
+}
+
+// kill terminates the child. It records whether a still-running process was
+// interrupted; a child that already exited returns os.ErrProcessDone and
+// leaves the genuine exit status intact for cleanup to report.
+func (s *systemXzStream) kill() {
+	if err := s.cmd.Process.Kill(); err == nil {
+		s.killed.Store(true)
+	}
 }
 
 // cleanup reaps the child process. Call on every exit path, including
 // early ones: it kills the child first so Wait cannot block on a child
-// stuck writing to an unconsumed stdout pipe, then reaps it.
+// stuck writing to an unconsumed stdout pipe, then reaps it and joins the
+// stdin feeder goroutine.
 func (s *systemXzStream) cleanup() error {
-	s.cancel()
+	s.kill()
 	err := s.cmd.Wait()
+	s.closeOnce.Do(func() { close(s.done) })
+	if s.feederDone != nil {
+		<-s.feederDone
+	}
+
+	if s.killed.Load() {
+		// We interrupted a still-running decoder during teardown; its exit
+		// status reflects our signal, not a decode failure.
+		return nil
+	}
 	if err != nil {
 		if s.stderr.Len() > 0 {
 			return fmt.Errorf("xz -dc failed: %v: %s", err, s.stderr.String())

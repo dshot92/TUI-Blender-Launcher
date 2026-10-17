@@ -11,15 +11,20 @@ import (
 
 // BlenderInNewTerminal launches Blender in a new terminal window (Linux-specific)
 func BlenderInNewTerminal(blenderExe string) error {
+	// The executable path is passed as a positional argument to `bash -c`
+	// and referenced as "$0". This avoids interpolating it into the shell
+	// script, so paths containing spaces or shell metacharacters are safe.
+	// `exec "$0"` replaces bash with Blender so the terminal stays attached
+	// to its output.
 	terminals := []struct {
 		name string
 		args []string
 	}{
-		{"x-terminal-emulator", []string{"-e", "nohup", blenderExe, "&"}},
-		{"gnome-terminal", []string{"--", "bash", "-c", "exec " + blenderExe}},
-		{"alacritty", []string{"-e", "bash", "-c", "exec " + blenderExe}},
-		{"xterm", []string{"-e", "bash", "-c", "exec " + blenderExe}},
-		{"konsole", []string{"-e", "bash", "-c", "exec " + blenderExe}},
+		{"x-terminal-emulator", []string{"-e", "bash", "-c", `exec "$0"`, blenderExe}},
+		{"gnome-terminal", []string{"--", "bash", "-c", `exec "$0"`, blenderExe}},
+		{"alacritty", []string{"-e", "bash", "-c", `exec "$0"`, blenderExe}},
+		{"xterm", []string{"-e", "bash", "-c", `exec "$0"`, blenderExe}},
+		{"konsole", []string{"-e", "bash", "-c", `exec "$0"`, blenderExe}},
 	}
 
 	for _, term := range terminals {

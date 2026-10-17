@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/dshot92/TUI-Blender-Launcher/model"
+
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
 )
@@ -13,12 +15,18 @@ import (
 // AppName is used for the config directory
 const AppName = "tui-blender-launcher" // Use lowercase app name
 
+// DefaultThemeName is the palette selected when no (valid) theme is configured.
+// The tui package re-exports it as DefaultPaletteName.
+const DefaultThemeName = "dracula"
+
 // Config holds the application settings.
 type Config struct {
-	DownloadDir   string `toml:"download_dir"`
-	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
-	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
-	UUID          string `toml:"uuid"`           // Unique identifier for this instance
+	DownloadDir   string   `toml:"download_dir"`
+	VersionFilter string   `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
+	BuildType     string   `toml:"build_type"`     // one of model.BuildTypes: "daily", "experimental", "patch"
+	ReleaseTypes  []string `toml:"release_types"`  // release_cycle values to show; empty = all
+	Theme         string   `toml:"theme"`          // UI palette name (dracula, catppuccin, nord, gruvbox, tokyonight)
+	UUID          string   `toml:"uuid"`           // Unique identifier for this instance
 }
 
 var (
@@ -50,9 +58,11 @@ func DefaultConfig() Config {
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,
-		VersionFilter: "",                  // No filter by default
-		BuildType:     "daily",             // Default to patch builds
-		UUID:          uuid.New().String(), // Generate a new UUID
+		VersionFilter: "4.x",                   // Show the current 4.x line by default
+		BuildType:     "daily",                 // Default to daily builds
+		ReleaseTypes:  model.AllReleaseTypes(), // Show every release type by default
+		Theme:         DefaultThemeName,        // Default UI palette
+		UUID:          uuid.New().String(),     // Generate a new UUID
 	}
 }
 
@@ -101,6 +111,21 @@ func LoadConfig() (Config, error) {
 			return cfg, fmt.Errorf("could not get home directory to expand path: %w", err)
 		}
 		cfg.DownloadDir = filepath.Join(homeDir, cfg.DownloadDir[1:])
+	}
+
+	// Ensure a palette is always selected.
+	if cfg.Theme == "" {
+		cfg.Theme = DefaultThemeName
+	}
+
+	// Normalize the build type so an unknown value never reaches the API or UI.
+	if bt := model.ParseBuildType(cfg.BuildType); string(bt) != cfg.BuildType {
+		cfg.BuildType = string(bt)
+	}
+
+	// Drop unknown or duplicate release cycles; an empty result means "all".
+	if len(cfg.ReleaseTypes) > 0 {
+		cfg.ReleaseTypes = []string(model.ParseReleaseTypes(cfg.ReleaseTypes))
 	}
 
 	return cfg, nil

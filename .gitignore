@@ -5,7 +5,9 @@
 *.so
 *.dylib
 TUI-Blender-Launcher
+tui-blender-launcher
 tbl
+dist/
 
 # Test binary, built with `go test -c`
 *.test

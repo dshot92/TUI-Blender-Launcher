@@ -1,12 +1,38 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/local"
-	"TUI-Blender-Launcher/model"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
+	"slices"
+	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
+)
+
+// statusLifetime is how long a transient status message stays on screen.
+const statusLifetime = 5 * time.Second
+
+// doubleClickWindow is how quickly two clicks on the same build row must follow
+// each other to register as a double click.
+const doubleClickWindow = 400 * time.Millisecond
+
+// tickIntervalIdle is the UI refresh interval when no transfer is running.
+const tickIntervalIdle = 500 * time.Millisecond
+
+// tickIntervalActive is the faster refresh interval used while a download or
+// extraction is in progress.
+const tickIntervalActive = 250 * time.Millisecond
+
+// initialTickDelay kicks the tick loop right after a download starts so the UI
+// reacts promptly.
+const initialTickDelay = 10 * time.Millisecond
+
+// Build-click double-click tolerance: the second click must land within this
+// many columns/rows of the first.
+const (
+	doubleClickSlopX = 2
+	doubleClickSlopY = 1
 )
 
 // Init initializes the model
@@ -35,13 +61,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		m.status = ""
 		return m, nil
 
-	case progress.FrameMsg:
-		// Pass to progress model
-		newProgress, cmd := m.Progress.Update(msg)
-		m.Progress = *newProgress.(*ProgressModel)
-		return m, cmd
+	case error:
+		// Raw errors (e.g. from local.LaunchBlenderCmd) would otherwise fall
+		// through and be silently dropped.
+		m.err = msg
+		m.status = ""
+		return m, nil
+
+	case statusMsg:
+		m.status = msg.text
+		m.err = nil
+		// Schedule the status line to expire. Bump the token so any earlier
+		// timer becomes a no-op.
+		m.statusToken++
+		token := m.statusToken
+		return m, tea.Tick(statusLifetime, func(time.Time) tea.Msg {
+			return clearStatusMsg{token: token}
+		})
+
+	case clearStatusMsg:
+		// Only clear if no newer status message has replaced this one.
+		if msg.token == m.statusToken {
+			m.status = ""
+		}
+		return m, nil
 	}
 
 	// Route based on view
@@ -51,6 +97,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle tick messages at top level to maintain update chain even in settings
 		if _, ok := msg.(tickMsg); ok {
 			return m.handleTickMsg(msg.(tickMsg))
+		}
+
+		// Mouse events in the settings modal drive focus, option selection and
+		// the help-line hints directly; they never reach the list view.
+		if mouseMsg, ok := msg.(tea.MouseMsg); ok {
+			if c, consumed := m.handleSettingsMouse(mouseMsg); consumed {
+				// Live-preview a palette chosen by clicking its chip.
+				if m.Settings.Theme != m.Style.Palette.Name {
+					m.setTheme(ResolvePalette(m.Settings.Theme))
+				}
+				m.syncVersionFilterFeedback()
+				m.autoSaveSettings()
+				return m, c
+			}
 		}
 
 		var newSettings tea.Model
@@ -64,8 +124,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if we need to handle specific keys here that perform "Controllers" logic
 		// that affects the whole app (like changing view)
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			return m.updateSettingsViewController(keyMsg, cmd)
+			mdl, c := m.updateSettingsViewController(keyMsg, cmd)
+			// Validate the version filter live as the user types or navigates,
+			// so a malformed value surfaces in the toast instead of being
+			// silently ignored.
+			m.syncVersionFilterFeedback()
+			m.autoSaveSettings()
+			return mdl, c
 		}
+		m.syncVersionFilterFeedback()
+		m.autoSaveSettings()
 		return m, cmd
 
 	default: // viewList
@@ -74,36 +142,108 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// syncVersionFilterFeedback validates the Version Filter while its settings row
+// is focused, surfacing a malformed value as a live error toast. The message is
+// cleared once the row loses focus (or the value becomes valid), so it never
+// lingers in the list view.
+func (m *Model) syncVersionFilterFeedback() {
+	inSettings := m.currentView == viewSettings || m.currentView == viewInitialSetup
+	if inSettings && m.Settings.FocusIndex == settingVersionFilter {
+		v := strings.TrimSpace(m.Settings.Inputs[settingVersionFilter].Value())
+		if _, err := model.ParseVersionFilter(v); err != nil {
+			m.filterErr = fmt.Errorf("invalid version filter format '%s': %w", v, err)
+			return
+		}
+	}
+	m.filterErr = nil
+}
+
+// autoSaveSettings persists the settings whenever the user changes a value.
+// While a text field or the release-type multi-select is mid-edit it waits, so
+// a partially typed value (or a cancelable toggle selection) is never written;
+// the change is saved once the edit is committed. An unchanged snapshot is a
+// no-op, so plain navigation never touches the disk.
+func (m *Model) autoSaveSettings() {
+	if m.Settings.EditMode || m.Settings.releaseEditing {
+		return
+	}
+	cur := m.Settings.GetValues()
+	if settingsEqual(cur, m.settingsSaved) {
+		return
+	}
+	if err := m.SaveSettings(); err != nil {
+		m.err = err
+		return
+	}
+	if m.commands != nil {
+		m.commands.SetConfig(m.config)
+	}
+	m.settingsSaved = cur
+}
+
+// settingsEqual reports whether two settings snapshots are identical.
+func settingsEqual(a, b SettingsValues) bool {
+	return a.DownloadDir == b.DownloadDir &&
+		a.VersionFilter == b.VersionFilter &&
+		a.BuildType == b.BuildType &&
+		a.Theme == b.Theme &&
+		slices.Equal(a.ReleaseTypes, b.ReleaseTypes)
+}
+
 // updateSettingsViewController handles app-level logic for settings view
 func (m *Model) updateSettingsViewController(msg tea.KeyMsg, innerCmd tea.Cmd) (tea.Model, tea.Cmd) {
+	// Live-preview the selected palette as the user cycles options.
+	if m.Settings.Theme != m.Style.Palette.Name {
+		m.setTheme(ResolvePalette(m.Settings.Theme))
+	}
+
 	// We check for specific commands that trigger state changes in the main model
 	for _, cmd := range GetCommandsForView(m.currentView) {
 		if MatchKey(msg, cmd.Type) {
 			switch cmd.Type {
 			case CmdQuit:
-				return m, tea.Quit
+				// While editing a text field, "q" is a literal character.
+				if !m.Settings.EditMode {
+					return m, tea.Quit
+				}
 			case CmdSaveSettings:
 				if !m.Settings.EditMode {
-					m.currentView = viewList
-					return m.SaveSettingsAndReturn()
-				}
-			case CmdCleanOldBuilds:
-				if !m.Settings.EditMode {
-					return m, func() tea.Msg {
-						count, err := local.CleanOldBuilds(m.config.DownloadDir)
-						if err != nil {
-							return errMsg{err}
-						}
-						if count == 0 {
-							return errMsg{fmt.Errorf("no old builds to clean")}
-						}
-						return errMsg{fmt.Errorf("successfully cleaned %d old build(s)", count)}
-					}
+					return m.saveSettingsAndExit()
 				}
 			}
 		}
 	}
 	return m, innerCmd
+}
+
+// registerBuildClick records a left click on a build row and reports whether it
+// forms a double click with the previous one (same row, nearby cell, and within
+// doubleClickWindow).
+func (m *Model) registerBuildClick(buildIdx, x, y int) bool {
+	now := time.Now()
+	double := buildIdx == m.lastClickBuild &&
+		!m.lastClickTime.IsZero() &&
+		now.Sub(m.lastClickTime) <= doubleClickWindow &&
+		absInt(x-m.lastClickX) <= doubleClickSlopX && absInt(y-m.lastClickY) <= doubleClickSlopY
+	m.lastClickTime = now
+	m.lastClickBuild = buildIdx
+	m.lastClickX = x
+	m.lastClickY = y
+	return double
+}
+
+// resetClickTracking forgets any pending click so the next build click cannot be
+// mistaken for the second half of a double click.
+func (m *Model) resetClickTracking() {
+	m.lastClickTime = time.Time{}
+	m.lastClickBuild = -1
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // updateListViewController handles logic for list view (controller layer)
@@ -136,27 +276,169 @@ func (m *Model) updateListViewController(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m.handleTickMsg(msg)
 
+	case tea.MouseMsg:
+		// A pending delete/cancel confirmation captures the mouse; clicking a
+		// button resolves it and other clicks are swallowed.
+		if m.deleteConfirm {
+			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+				switch m.deleteConfirmButtonAt(msg.X, msg.Y) {
+				case confirmChoiceYes:
+					m.deleteConfirm = false
+					return m.doDeleteBuild()
+				case confirmChoiceNo:
+					m.deleteConfirm = false
+				}
+			}
+			return m, nil
+		}
+
+		// Close the context menu on any click outside of it.
+		if m.contextMenuVisible && msg.Action == tea.MouseActionPress {
+			// If the click lands inside the menu, act on the chosen entry.
+			if idx := m.contextMenuItemAt(msg.X, msg.Y); idx >= 0 {
+				m.contextMenuChoice = idx
+				return m.executeContextMenuItem()
+			}
+			// A right click on another build re-opens the menu there.
+			if msg.Button == tea.MouseButtonRight {
+				if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+					m.List.Cursor = buildIdx
+					m.List.EnsureCursorVisible()
+					m.openContextMenu(buildIdx, msg.X, msg.Y)
+					return m, nil
+				}
+			}
+			m.closeContextMenu()
+		}
+
+		switch {
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+			// Footer command hints are clickable.
+			if cmd, ok := m.footerCommandAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
+				return m.executeFooterCommand(cmd)
+			}
+			// URL row in the info panel takes priority.
+			if url, ok := m.urlAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
+				return m, openURLCmd(url)
+			}
+			// Clicking a table header sorts by that column; clicking the
+			// active column again flips the direction.
+			if col, ok := m.columnAt(msg.X, msg.Y); ok {
+				m.resetClickTracking()
+				m.List.SortByColumn(col)
+				return m, nil
+			}
+			if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+				m.List.Cursor = buildIdx
+				m.List.EnsureCursorVisible()
+				m.closeContextMenu()
+				// A double click on a local build launches it.
+				if m.registerBuildClick(buildIdx, msg.X, msg.Y) {
+					if build := m.List.GetSelectedBuild(); build != nil && build.Status == model.StateLocal {
+						return m.handleLaunchBlender()
+					}
+				}
+			}
+
+		case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight:
+			if buildIdx, ok := m.buildAt(msg.X, msg.Y); ok {
+				m.List.Cursor = buildIdx
+				m.List.EnsureCursorVisible()
+				m.openContextMenu(buildIdx, msg.X, msg.Y)
+			}
+
+		case msg.Button == tea.MouseButtonWheelUp:
+			m.List.UpdateCursor("up", m.List.GetVisibleRowsCount())
+		case msg.Button == tea.MouseButtonWheelDown:
+			m.List.UpdateCursor("down", m.List.GetVisibleRowsCount())
+		}
+		return m, nil
+
 	case tea.KeyMsg:
-		// Check for app-level commands first
+		// A pending context menu captures keys until it is resolved/dismissed.
+		if m.contextMenuVisible {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.closeContextMenu()
+				return m, nil
+			case tea.KeyUp, tea.KeyShiftTab:
+				if m.contextMenuChoice > 0 {
+					m.contextMenuChoice--
+				}
+				return m, nil
+			case tea.KeyDown, tea.KeyTab:
+				if m.contextMenuChoice < len(m.contextMenuItems)-1 {
+					m.contextMenuChoice++
+				}
+				return m, nil
+			case tea.KeyEnter:
+				return m.executeContextMenuItem()
+			}
+			if msg.Type == tea.KeyRunes {
+				switch string(msg.Runes) {
+				case "k":
+					if m.contextMenuChoice > 0 {
+						m.contextMenuChoice--
+					}
+					return m, nil
+				case "j":
+					if m.contextMenuChoice < len(m.contextMenuItems)-1 {
+						m.contextMenuChoice++
+					}
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
+		// A pending delete/cancel confirmation captures all keys until it is
+		// resolved, so the destructive action is never performed accidentally.
+		if m.deleteConfirm {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.deleteConfirm = false
+				return m, nil
+			case tea.KeyLeft:
+				m.deleteConfirmChoice = confirmChoiceNo
+				return m, nil
+			case tea.KeyRight:
+				m.deleteConfirmChoice = confirmChoiceYes
+				return m, nil
+			case tea.KeyEnter:
+				confirm := m.deleteConfirmChoice == confirmChoiceYes
+				m.deleteConfirm = false
+				if confirm {
+					return m.doDeleteBuild()
+				}
+				return m, nil
+			}
+			if msg.Type == tea.KeyRunes {
+				switch string(msg.Runes) {
+				case "h":
+					m.deleteConfirmChoice = confirmChoiceNo
+					return m, nil
+				case "l":
+					m.deleteConfirmChoice = confirmChoiceYes
+					return m, nil
+				case "x", "X", "y", "Y":
+					m.deleteConfirm = false
+					return m.doDeleteBuild()
+				case "n", "N", "q", "Q":
+					m.deleteConfirm = false
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
+		// App-level commands get first refusal; anything they do not handle
+		// (cursor movement, column changes) falls through to the list model.
 		for _, command := range GetCommandsForView(viewList) {
 			if MatchKey(msg, command.Type) {
-				switch command.Type {
-				case CmdQuit:
-					return m, tea.Quit
-				case CmdShowSettings:
-					m.currentView = viewSettings
-					m.Settings.SetValues(m.config.DownloadDir, m.config.VersionFilter, m.config.BuildType)
-					return m, nil
-				case CmdFetchBuilds:
-					return m, m.commands.FetchBuilds()
-				case CmdDownloadBuild:
-					return m.handleStartDownload()
-				case CmdLaunchBuild:
-					return m.handleLaunchBlender()
-				case CmdOpenBuildDir:
-					return m.handleOpenBuildDir()
-				case CmdDeleteBuild:
-					return m.handleDeleteBuild()
+				if mdl, c, handled := m.executeListCommand(command.Type); handled {
+					return mdl, c
 				}
 			}
 		}

@@ -1,8 +1,8 @@
 package api
 
 import (
-	"TUI-Blender-Launcher/model"
 	"fmt"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,8 +16,8 @@ func TestFetchBuilds(t *testing.T) {
 	// Setup a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify UUID header
-		if uuid := r.Header.Get("X-Client-UUID"); uuid == "" {
-			t.Errorf("Expected X-Client-UUID header, got none")
+		if uuid := r.Header.Get("X-Client-UUID"); uuid != "test-uuid" {
+			t.Errorf("X-Client-UUID = %q, want %q", uuid, "test-uuid")
 		}
 
 		// Check the request method and path
@@ -40,7 +40,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-4.0.0-linux-x86_64.tar.xz",
 				"file_extension": "tar.xz",
-				"release_cycle": "daily"
+				"release_cycle": "alpha"
 			},
 			{
 				"version": "3.6.2",
@@ -53,7 +53,7 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-3.6.2-linux-x86_64.tar.xz",
 				"file_extension": "tar.xz",
-				"release_cycle": "daily"
+				"release_cycle": "beta"
 			},
 			{
 				"version": "3.5.1",
@@ -66,20 +66,20 @@ func TestFetchBuilds(t *testing.T) {
 				"file_size": 123456789,
 				"file_name": "blender-3.5.1-windows-x86_64.zip",
 				"file_extension": "zip",
-				"release_cycle": "daily"
+				"release_cycle": "stable"
 			},
 			{
 				"version": "4.0.0",
 				"branch": "main",
 				"hash": "jkl012",
 				"file_mtime": 1633046100,
-				"url": "https://example.com/blender-4.0.0-linux-x86_64.sha256",
+				"url": "https://example.com/blender-4.0.0-linux-x86_64.tar.xz.sha256",
 				"platform": "linux",
 				"architecture": "x86_64",
 				"file_size": 123,
-				"file_name": "blender-4.0.0-linux-x86_64.sha256",
+				"file_name": "blender-4.0.0-linux-x86_64.tar.xz.sha256",
 				"file_extension": "sha256",
-				"release_cycle": "daily"
+				"release_cycle": "candidate"
 			}
 		]`)
 	}))
@@ -98,6 +98,7 @@ func TestFetchBuilds(t *testing.T) {
 		name            string
 		versionFilter   string
 		buildType       string
+		releaseTypes    []string
 		expectError     bool
 		expectedCount   int
 		checkFirstBuild func(*testing.T, model.BlenderBuild)
@@ -125,6 +126,10 @@ func TestFetchBuilds(t *testing.T) {
 				if build.Status != model.StateOnline {
 					t.Errorf("Expected status Online, got %s", build.Status)
 				}
+				wantChecksum := "https://example.com/blender-4.0.0-linux-x86_64.tar.xz.sha256"
+				if build.ChecksumURL != wantChecksum {
+					t.Errorf("ChecksumURL = %q, want %q", build.ChecksumURL, wantChecksum)
+				}
 			},
 		},
 		{
@@ -148,6 +153,22 @@ func TestFetchBuilds(t *testing.T) {
 			checkFirstBuild: nil,
 		},
 		{
+			name:            "release filter alpha and beta",
+			buildType:       "daily",
+			releaseTypes:    []string{"alpha", "beta"},
+			expectError:     false,
+			expectedCount:   2,
+			checkFirstBuild: nil,
+		},
+		{
+			name:            "release filter stable only",
+			buildType:       "daily",
+			releaseTypes:    []string{"stable"},
+			expectError:     false,
+			expectedCount:   0, // the only stable entry is windows, dropped by the platform filter
+			checkFirstBuild: nil,
+		},
+		{
 			name:            "invalid filter",
 			versionFilter:   "invalid",
 			buildType:       "daily",
@@ -162,7 +183,12 @@ func TestFetchBuilds(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Call the function
-			builds, err := a.FetchBuilds(tc.versionFilter, tc.buildType)
+			builds, err := a.FetchBuilds(FetchOptions{
+				VersionFilter: tc.versionFilter,
+				BuildType:     tc.buildType,
+				ReleaseTypes:  tc.releaseTypes,
+				UUID:          "test-uuid",
+			})
 
 			// Check error result
 			if tc.expectError && err == nil {
@@ -208,7 +234,7 @@ func TestFetchBuildsServerError(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := a.FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds(FetchOptions{BuildType: "daily"})
 
 	// Should return an error
 	if err == nil {
@@ -245,7 +271,7 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := a.FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds(FetchOptions{BuildType: "daily"})
 
 	// Should return an error
 	if err == nil {

@@ -1,118 +1,186 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/download"
-	"TUI-Blender-Launcher/model"
-	"fmt"
-	"os"
-	"path/filepath"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 	"strings"
 )
 
-// renderBuildFooter renders the footer for the build list view
-func (m *Model) renderBuildFooter() string {
-	keyStyle := m.Style.Key
-	sepStyle := m.Style.Separator
-	separator := sepStyle.Render(" · ")
-	newlineStyle := m.Style.Newline.Render("\n")
-
-	// General commands always available
-	generalCommands := []string{
-		fmt.Sprintf("%s Fetch", keyStyle.Render("f")),
-		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
-		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
-		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
-	}
-
-	// Contextual commands based on the highlighted build
-	contextualCommands := []string{}
-	if len(m.List.Builds) > 0 && m.List.Cursor < len(m.List.Builds) {
-		build := m.List.Builds[m.List.Cursor]
-		if build.Status == model.StateLocal {
-			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
-				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
-			)
-			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
-			)
-		} else if build.Status == model.StateUpdate {
-			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Download", keyStyle.Render("d")),
-				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
-				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
-				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
-			)
-		} else if build.Status == model.StateOnline ||
-			build.Status == model.StateCancelled ||
-			build.Status == model.StateFailed {
-			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Download", keyStyle.Render("d")),
-			)
-		}
-
-		// Check for active download state
-		buildID := build.Version
-		if build.Hash != "" {
-			buildID = build.Version + "-" + build.Hash[:8]
-		}
-		state := m.commands.downloads.GetState(buildID)
-		if state != nil && (state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
-			// Remove any existing download command
-			filtered := []string{}
-			for _, cmd := range contextualCommands {
-				if !strings.Contains(cmd, "Download") {
-					filtered = append(filtered, cmd)
-				}
-			}
-			contextualCommands = filtered
-			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Cancel", keyStyle.Render("x")),
-			)
-		}
-	}
-
-	line1 := strings.Join(contextualCommands, separator)
-	line2 := strings.Join(generalCommands, separator)
-
-	// Combine lines with styled newline
-	footerContent := line1 + newlineStyle + line2
-	return m.Style.Footer.Width(m.terminalWidth).Render(footerContent)
+// hint is a single footer key/label pair.
+type hint struct {
+	key   string
+	label string
+	cmd   CommandType
 }
 
-// renderSettingsFooter renders the footer for the settings view
-func (m *Model) renderSettingsFooter() string {
-	keyStyle := m.Style.Key
-	sepStyle := m.Style.Separator
-	separator := sepStyle.Render(" · ")
-	newlineStyle := m.Style.Newline.Render("\n")
+// renderHints renders a slice of hints separated by a subtle divider.
+func (m *Model) renderHints(hints []hint) string {
+	parts := make([]string, 0, len(hints))
+	for _, h := range hints {
+		if h.key == "" {
+			parts = append(parts, m.Style.HelpDesc.Render(h.label))
+			continue
+		}
+		parts = append(parts, m.Style.HelpKey.Render(h.key)+m.Style.HelpDesc.Render(" "+h.label))
+	}
+	return strings.Join(parts, m.Style.HelpSep.Render("  ·  "))
+}
 
-	// Check if old builds exist to clean
-	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)
-	showCleanOption := false
+// renderFooter lays the two hint lines out, aligned to the terminal width and
+// padded so the footer is always exactly footerHeight lines.
+func (m *Model) renderFooter(line1, line2 string) string {
+	line1 = truncate(line1, m.terminalWidth)
+	line2 = truncate(line2, m.terminalWidth)
+	return m.Style.Footer.Width(m.terminalWidth).Render(line1 + "\n" + line2)
+}
 
-	// Check if the directory exists and has contents
-	if _, err := os.Stat(oldBuildsDir); !os.IsNotExist(err) {
-		if entries, err := os.ReadDir(oldBuildsDir); err == nil && len(entries) > 0 {
-			showCleanOption = true
+// footerHints returns the contextual (top) and general (bottom) footer hint
+// lists, each annotated with its command type for mouse hit-testing.
+func (m *Model) footerHints() (contextual, general []hint) {
+	infoLabel := "Show Info"
+	if m.layout.detailVisible {
+		infoLabel = "Hide Info"
+	}
+	general = []hint{
+		{key: PrimaryKey(CmdFetchBuilds), label: "Fetch", cmd: CmdFetchBuilds},
+		{key: PrimaryKey(CmdToggleSortOrder), label: "Reverse Sort", cmd: CmdToggleSortOrder},
+		{key: PrimaryKey(CmdToggleDetail), label: infoLabel, cmd: CmdToggleDetail},
+		{key: PrimaryKey(CmdShowSettings), label: "Settings", cmd: CmdShowSettings},
+		{key: PrimaryKey(CmdCleanOldBuilds), label: "Clean Old", cmd: CmdCleanOldBuilds},
+		{key: PrimaryKey(CmdQuit), label: "Quit", cmd: CmdQuit},
+	}
+
+	contextual = []hint{}
+	if build := m.List.GetSelectedBuild(); build != nil {
+		downloading := m.isDownloading(*build)
+
+		switch {
+		case downloading:
+			contextual = append(contextual, hint{key: PrimaryKey(CmdDeleteBuild), label: "Cancel", cmd: CmdDeleteBuild})
+		default:
+			switch build.Status {
+			case model.StateLocal:
+				contextual = append(contextual,
+					hint{key: PrimaryKey(CmdLaunchBuild), label: "Launch", cmd: CmdLaunchBuild},
+					hint{key: PrimaryKey(CmdOpenBuildDir), label: "Open Dir", cmd: CmdOpenBuildDir},
+					hint{key: PrimaryKey(CmdDeleteBuild), label: "Delete", cmd: CmdDeleteBuild},
+				)
+			case model.StateUpdate:
+				contextual = append(contextual,
+					hint{key: PrimaryKey(CmdDownloadBuild), label: "Download", cmd: CmdDownloadBuild},
+					hint{key: PrimaryKey(CmdLaunchBuild), label: "Launch", cmd: CmdLaunchBuild},
+					hint{key: PrimaryKey(CmdOpenBuildDir), label: "Open Dir", cmd: CmdOpenBuildDir},
+					hint{key: PrimaryKey(CmdDeleteBuild), label: "Delete", cmd: CmdDeleteBuild},
+				)
+			case model.StateOnline, model.StateCancelled, model.StateFailed:
+				contextual = append(contextual, hint{key: PrimaryKey(CmdDownloadBuild), label: "Download", cmd: CmdDownloadBuild})
+			}
+			if build.DownloadURL != "" && build.Status != model.StateLocal {
+				contextual = append(contextual, hint{key: PrimaryKey(CmdOpenURL), label: "Open URL", cmd: CmdOpenURL})
+			}
+		}
+	}
+	return contextual, general
+}
+
+// renderBuildFooter renders the footer for the build list view.
+func (m *Model) renderBuildFooter() string {
+	contextual, general := m.footerHints()
+	return m.renderFooter(m.renderHints(contextual), m.renderHints(general))
+}
+
+// footerCommandAt maps a click in the footer region to the command it invokes.
+// It returns false when (x, y) does not land on a rendered hint.
+func (m *Model) footerCommandAt(x, y int) (CommandType, bool) {
+	if m.terminalHeight <= 0 {
+		return 0, false
+	}
+	topY := m.terminalHeight - footerHeight
+	if y < topY || y >= m.terminalHeight {
+		return 0, false
+	}
+	contextual, general := m.footerHints()
+	var hints []hint
+	if y == topY {
+		hints = contextual
+	} else {
+		hints = general
+	}
+	if len(hints) == 0 {
+		return 0, false
+	}
+	return hintAt(hints, x, 0)
+}
+
+// hintAt maps an x coordinate to the command of the hint it lands on, given the
+// column where the hint line starts. Hints are laid out as "key label" segments
+// separated by "  ·  ", matching renderHints.
+func hintAt(hints []hint, x, lineStart int) (CommandType, bool) {
+	sepWidth := width("  ·  ")
+	cursor := lineStart
+	for i, h := range hints {
+		segment := h.label
+		if h.key != "" {
+			segment = h.key + " " + h.label
+		}
+		segWidth := width(segment)
+		if x >= cursor && x < cursor+segWidth {
+			return h.cmd, true
+		}
+		cursor += segWidth
+		if i < len(hints)-1 {
+			cursor += sepWidth
+		}
+	}
+	return 0, false
+}
+
+// settingsHints returns the key hints shown inside the settings modal. The
+// hints describe only the commands that actually apply to the focused row and
+// current mode, so the help line never advertises a key that does nothing (for
+// example, left/right over a text field).
+func (m *Model) settingsHints() []hint {
+	// While editing a text field, most keys go to the input, so advertise the
+	// ways to complete or leave the edit instead.
+	if m.Settings.EditMode {
+		hints := []hint{}
+		if m.Settings.FocusIndex == settingDownloadDir {
+			hints = append(hints, hint{key: "tab", label: "complete", cmd: CmdNone})
+		}
+		return append(hints,
+			hint{key: "esc", label: "cancel", cmd: CmdNone},
+			hint{key: "enter", label: "save", cmd: CmdNone},
+		)
+	}
+
+	// While toggling release types, advertise the toggle controls.
+	if m.Settings.releaseEditing {
+		return []hint{
+			{key: "←/→", label: "move", cmd: CmdNone},
+			{key: "space", label: "toggle", cmd: CmdNone},
+			{key: "enter", label: "save", cmd: CmdNone},
+			{key: "esc", label: "cancel", cmd: CmdNone},
 		}
 	}
 
-	commands := []string{
-		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
-		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
+	commands := []hint{}
+
+	// Option rows cycle their value with left/right; text and multi-select rows
+	// only open an editor, so left/right does not apply to them.
+	switch m.Settings.FocusIndex {
+	case settingBuildType, settingTheme:
+		commands = append(commands,
+			hint{key: "←/→", label: "change", cmd: CmdNone},
+		)
+	default:
+		commands = append(commands,
+			hint{key: PrimaryKey(CmdToggleEditMode), label: "edit", cmd: CmdToggleEditMode},
+		)
 	}
 
-	// Only add the clean option if there are old builds
-	if showCleanOption {
-		commands = append(commands, fmt.Sprintf("%s Clean old Builds Dir", keyStyle.Render("c")))
-	}
+	commands = append(commands,
+		hint{key: PrimaryKey(CmdSaveSettings), label: "save", cmd: CmdSaveSettings},
+		hint{key: PrimaryKey(CmdQuit), label: "quit", cmd: CmdQuit},
+	)
 
-	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
-
-	line2 := strings.Join(commands, separator)
-
-	// Combine lines with styled newline
-	footerContent := newlineStyle + line2
-	return m.Style.Footer.Width(m.terminalWidth).Render(footerContent)
+	return commands
 }

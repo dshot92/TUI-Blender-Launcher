@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
+	"github.com/dshot92/TUI-Blender-Launcher/model"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,33 +9,35 @@ import (
 
 // ListModel handles the state and logic for the build list view.
 type ListModel struct {
-	Builds          []model.BlenderBuild
-	Cursor          int
-	StartIndex      int
-	SortColumn      int
-	SortReversed    bool
-	TerminalHeight  int
-	Style           Style // Keep Style here as well if needed for List specific rendering
-	LastRenderState map[string]float64
+	Builds         []model.BlenderBuild
+	Cursor         int
+	StartIndex     int
+	SortColumn     int
+	SortReversed   bool
+	TerminalHeight int
+	VisibleRows    int   // rows available for the table body (set by the layout)
+	Style          Style // Keep Style here as well if needed for List specific rendering
 }
 
 // NewListModel creates a new ListModel.
 func NewListModel(style Style) ListModel {
 	return ListModel{
-		SortColumn:      0,
-		SortReversed:    true,
-		Style:           style,
-		Builds:          []model.BlenderBuild{},
-		LastRenderState: make(map[string]float64),
+		SortColumn:   0,
+		SortReversed: true,
+		Style:        style,
+		Builds:       []model.BlenderBuild{},
 	}
 }
 
-// Init initializes the model.
+// Init initializes the model. It is required by the tea.Model interface that
+// ListModel.Update returns.
 func (m ListModel) Init() tea.Cmd {
 	return nil
 }
 
-// View returns the string representation of the model.
+// View returns the string representation of the model. It is required by the
+// tea.Model interface that ListModel.Update returns; the list is rendered by the
+// parent Model instead.
 func (m ListModel) View() string {
 	return ""
 }
@@ -98,6 +100,9 @@ func (m *ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *ListModel) GetVisibleRowsCount() int {
+	if m.VisibleRows > 0 {
+		return m.VisibleRows
+	}
 	if m.TerminalHeight < 7 {
 		return 1
 	}
@@ -171,8 +176,7 @@ func (m *ListModel) EnsureCursorVisible() {
 
 // UpdateSortColumn changes the sort column
 func (m *ListModel) UpdateSortColumn(direction string) {
-	// Total columns: Version, Status, Branch, Type, Hash, Size, Build Date
-	numColumns := 7
+	numColumns := len(buildColumnNames)
 
 	if direction == "left" {
 		m.SortColumn--
@@ -185,6 +189,23 @@ func (m *ListModel) UpdateSortColumn(direction string) {
 			m.SortColumn = 0
 		}
 	}
+}
+
+// SortByColumn selects column as the sort key. Clicking the column that is
+// already active flips the sort direction; switching to a different column
+// starts ascending. The cursor is kept visible after the reorder.
+func (m *ListModel) SortByColumn(column int) {
+	if column < 0 || column >= len(buildColumnNames) {
+		return
+	}
+	if column == m.SortColumn {
+		m.SortReversed = !m.SortReversed
+	} else {
+		m.SortColumn = column
+		m.SortReversed = false
+	}
+	m.SortBuilds()
+	m.EnsureCursorVisible()
 }
 
 // SortBuilds sorts the build list
