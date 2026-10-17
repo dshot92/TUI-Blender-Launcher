@@ -2,7 +2,7 @@
 
 A terminal user interface (TUI) for finding, downloading, managing, and launching Blender builds. It uses the official Blender BuildBot API and keeps installed builds organized on disk.
 
-![Video Example](readme_assets/example.webm)
+![Video Example](readme_assets/example.gif)
 
 ## Features
 
