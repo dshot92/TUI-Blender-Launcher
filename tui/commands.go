@@ -101,6 +101,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		dm.mu.Unlock()
 		programCh <- downloadCompleteMsg{
 			buildVersion: build.Version,
+			buildID:      buildID,
 			err:          fmt.Errorf("failed to create download directory: %w", err),
 		}
 		return nil
@@ -174,6 +175,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 
 		programCh <- downloadCompleteMsg{
 			buildVersion: build.Version,
+			buildID:      buildID,
 			err:          err,
 		}
 	}()

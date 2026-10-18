@@ -28,6 +28,7 @@ type (
 	}
 	downloadCompleteMsg struct { // Download & extraction finished
 		buildVersion string // Version of the build that finished
+		buildID      string // Stable ID (version+hash) of the build that finished
 		err          error
 	}
 	buildDeletedMsg struct { // Build was deleted from disk

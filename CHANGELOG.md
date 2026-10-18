@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.1 (2026-10-18)
+
+### Fixes
+
+- Keep an in-flight update download on the same row as its local build when
+  leaving the settings view; the refresh no longer splits the transferring
+  build into a separate row.
+
 ## v1.0.0 (2026-10-17)
 
 ### Highlights
