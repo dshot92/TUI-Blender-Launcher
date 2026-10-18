@@ -204,7 +204,7 @@ func (m *Model) mergeBuilds(incoming []model.BlenderBuild) []model.BlenderBuild 
 	// Start with preserved builds (local + in-progress).
 	merged := make([]model.BlenderBuild, 0, len(m.List.Builds)+len(incoming))
 	for _, build := range m.List.Builds {
-		if build.Status == model.StateLocal || build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+		if build.Status == model.StateLocal || isInProgress(build.Status) {
 			merged = append(merged, build)
 		}
 	}
@@ -213,14 +213,27 @@ func (m *Model) mergeBuilds(incoming []model.BlenderBuild) []model.BlenderBuild 
 	for _, newBuild := range incoming {
 		isDuplicate := false
 		for i, existingBuild := range merged {
+			inProgress := isInProgress(existingBuild.Status)
+
+			// Exact build (same version+hash): refresh its data in place,
+			// preserving an in-progress transfer's status.
 			if existingBuild.Version == newBuild.Version &&
 				(existingBuild.Hash == newBuild.Hash || (existingBuild.Hash == "" && newBuild.Hash == "")) {
 				isDuplicate = true
-				// Preserve downloading/extracting status across the merge.
-				if existingBuild.Status == model.StateDownloading || existingBuild.Status == model.StateExtracting {
+				if inProgress {
 					newBuild.Status = existingBuild.Status
 				}
 				merged[i] = newBuild
+				break
+			}
+
+			// Same logical build (version+branch+release cycle) as an active
+			// transfer: the incoming local copy is the build being replaced, so
+			// keep the in-progress row instead of decoupling it into a second
+			// row. Its hash/URL/status must be preserved so progress reporting
+			// (keyed by build ID) keeps targeting it.
+			if inProgress && sameBuildIdentity(existingBuild, newBuild) {
+				isDuplicate = true
 				break
 			}
 		}
@@ -231,6 +244,20 @@ func (m *Model) mergeBuilds(incoming []model.BlenderBuild) []model.BlenderBuild 
 
 	// Apply version and release-type filters if set.
 	return m.applyFilters(merged)
+}
+
+// isInProgress reports whether status represents an active download or
+// extraction.
+func isInProgress(status model.BuildState) bool {
+	return status == model.StateDownloading || status == model.StateExtracting
+}
+
+// sameBuildIdentity reports whether two builds refer to the same logical build.
+// It matches on version, branch, and release cycle: the same key
+// UpdateBuildStatus groups by and the downloader uses to find the build it
+// replaces.
+func sameBuildIdentity(a, b model.BlenderBuild) bool {
+	return a.Version == b.Version && a.Branch == b.Branch && a.ReleaseCycle == b.ReleaseCycle
 }
 
 // handleLocalBuildsScanned processes the result of scanning local builds
@@ -361,19 +388,26 @@ func (m *Model) SaveSettingsAndReturn() (tea.Model, tea.Cmd) {
 func (m *Model) handleDownloadCompleteMsg(msg downloadCompleteMsg) (tea.Model, tea.Cmd) {
 	// Handle completion of download
 	for i := range m.List.Builds {
-		// Find the build by version and update its status
-		if m.List.Builds[i].Version == msg.buildVersion {
-			if msg.err != nil {
-				// Handle download error
-				m.List.Builds[i].Status = model.StateFailed
-				m.err = msg.err
-			} else {
-				// Update to local state on success
-				m.List.Builds[i].Status = model.StateLocal
-				m.err = nil
+		// Match by stable ID so the exact row is updated even when another
+		// build shares its version (e.g. a different branch). Fall back to the
+		// version when no ID was carried.
+		if msg.buildID != "" {
+			if m.List.Builds[i].ID() != msg.buildID {
+				continue
 			}
-			break
+		} else if m.List.Builds[i].Version != msg.buildVersion {
+			continue
 		}
+		if msg.err != nil {
+			// Handle download error
+			m.List.Builds[i].Status = model.StateFailed
+			m.err = msg.err
+		} else {
+			// Update to local state on success
+			m.List.Builds[i].Status = model.StateLocal
+			m.err = nil
+		}
+		break
 	}
 
 	// Re-sort the builds
